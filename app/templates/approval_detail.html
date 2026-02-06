@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+
+{% block title %}Capture {{ capture.id }}{% endblock %}
+
+{% block content %}
+<h2>Capture {{ capture.id }}</h2>
+
+<p>
+    <span class="badge badge-{{ capture.decision_status }}">{{ capture.decision_status }}</span>
+    &nbsp;Created: {{ capture.created_at }} &mdash; Source: {{ capture.source }}
+</p>
+
+{% if capture.source_link %}
+<p>
+    Source link:
+    <a href="{{ capture.source_link }}" target="_blank" rel="noopener noreferrer">
+        Open original
+    </a>
+</p>
+{% endif %}
+
+<details>
+    <summary><strong>Raw text</strong></summary>
+    <pre>{{ capture.raw_text }}</pre>
+</details>
+
+{% set clar = clar_dict %}
+
+<h3>Clarified interpretation</h3>
+
+<p><strong>Confidence:</strong>
+    {% if clar and ('confidence_score' in clar or 'confidence' in clar) %}
+        {% if 'confidence_score' in clar and clar['confidence_score'] is not none %}
+            <span class="confidence">{{ "%.2f"|format(clar['confidence_score']) }}</span>
+        {% elif 'confidence' in clar and clar['confidence'] is not none %}
+            <span class="confidence">{{ "%.2f"|format(clar['confidence']) }}</span>
+        {% else %}
+            <em>n/a</em>
+        {% endif %}
+    {% else %}
+        <em>n/a</em>
+    {% endif %}
+</p>
+
+<ul>
+    <li><strong>Project</strong>:
+        {% if clar and 'project_name' in clar and clar['project_name'] %}
+            {{ clar['project_name'] }}
+        {% elif clar and 'project' in clar and clar['project'] %}
+            {{ clar['project'] }}
+        {% else %}
+            <em>(none)</em>
+        {% endif %}
+    </li>
+    <li><strong>Next action</strong>:
+        {% if clar and 'next_action' in clar and clar['next_action'] %}{{ clar['next_action'] }}{% else %}<em>(none)</em>{% endif %}
+    </li>
+    <li><strong>Context</strong>:
+        {% if clar and 'suggested_context' in clar and clar['suggested_context'] %}{{ clar['suggested_context'] }}{% else %}<em>(none)</em>{% endif %}
+    </li>
+    <li><strong>Due date</strong>:
+        {% if clar and 'due_date' in clar and clar['due_date'] %}{{ clar['due_date'] }}{% else %}<em>(none)</em>{% endif %}
+    </li>
+    <li><strong>Notes</strong>:
+        {% if clar and 'notes' in clar and clar['notes'] %}{{ clar['notes'] }}{% else %}<em>(none)</em>{% endif %}
+    </li>
+</ul>
+
+<h3>Edit clarification JSON</h3>
+<form method="post" action="/approvals/{{ capture.id }}/clarification">
+    <textarea name="clarification_json">{{ clarification_json }}</textarea>
+    <div class="actions">
+        <button type="submit">Save clarification</button>
+    </div>
+</form>
+
+<h3>Decision</h3>
+{% if capture.decision_status == "proposed" %}
+<div class="actions">
+    <form method="post" action="/approvals/{{ capture.id }}/approve">
+        <button type="submit" class="approve">Approve</button>
+    </form>
+    <form method="post" action="/approvals/{{ capture.id }}/reject">
+        <button type="submit" class="reject">Reject</button>
+    </form>
+</div>
+{% else %}
+<p>This capture has already been {{ capture.decision_status }} and cannot be changed.</p>
+{% endif %}
+
+{% endblock %}

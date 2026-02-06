@@ -1,0 +1,14 @@
+version: "3.9"
+
+services:
+  gtd-backend:
+    build: .
+    container_name: gtd-backend
+    restart: unless-stopped
+    environment:
+      - DATABASE_PATH=/app/data/gtd.db
+    volumes:
+      - ./data:/app/data
+    ports:
+      - "8000:8000"
+

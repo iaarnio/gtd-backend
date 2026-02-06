@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+
+{% block title %}Pending approvals{% endblock %}
+
+{% block content %}
+<h2>Pending approvals</h2>
+
+{% if captures %}
+<table>
+    <thead>
+    <tr>
+        <th>ID</th>
+        <th>Created</th>
+        <th>Source</th>
+        <th>Clarified summary</th>
+        <th>Confidence</th>
+        <th></th>
+    </tr>
+    </thead>
+    <tbody>
+    {% for c in captures %}
+        {% set clar = c.clar_dict %}
+        <tr>
+            <td>{{ c.id }}</td>
+            <td>{{ c.created_at }}</td>
+            <td>{{ c.source }}</td>
+            <td>
+                {% if clar %}
+                    {% if 'clarified_text' in clar and clar['clarified_text'] %}
+                        {{ clar['clarified_text'] }}
+                    {% elif 'next_action' in clar and clar['next_action'] %}
+                        {{ clar['next_action'] }}
+                    {% else %}
+                        <em>No clarified text</em>
+                    {% endif %}
+                {% else %}
+                    <em>No clarification yet</em>
+                {% endif %}
+            </td>
+            <td>
+                {% if clar and 'confidence_score' in clar and clar['confidence_score'] is not none %}
+                    <span class="confidence">{{ "%.2f"|format(clar['confidence_score']) }}</span>
+                {% else %}
+                    <em>n/a</em>
+                {% endif %}
+            </td>
+            <td><a href="/approvals/{{ c.id }}">Open</a></td>
+        </tr>
+    {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p>No proposed captures awaiting approval.</p>
+{% endif %}
+
+{% endblock %}
+
