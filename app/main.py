@@ -1,4 +1,5 @@
 import json
+import logging
 from typing import Any, Dict, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Request, status
@@ -10,6 +11,11 @@ from . import clarification, email_ingestion, models, rtm_commit  # noqa: F401  
 from .db import Base, engine, get_db
 from .schemas import CaptureCreate, CaptureOut, ClarificationUpdate
 
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+)
 
 app = FastAPI(title="Personal GTD Backend", version="0.1.0")
 templates = Jinja2Templates(directory="app/templates")

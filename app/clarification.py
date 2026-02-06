@@ -121,8 +121,14 @@ def _get_client() -> Optional[OpenAI]:
     api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
         return None
-    # The OpenAI client reads the key from environment by default.
-    return OpenAI()
+
+    # Get optional base URL override (for custom endpoints or proxies).
+    base_url = os.environ.get("OPENAI_BASE_URL")
+
+    if base_url:
+        return OpenAI(api_key=api_key, base_url=base_url)
+    else:
+        return OpenAI(api_key=api_key)
 
 
 def _build_user_prompt(raw_text: str) -> str:

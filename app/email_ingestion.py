@@ -1,4 +1,5 @@
 import imaplib
+import logging
 import os
 import threading
 import time
@@ -8,6 +9,8 @@ from typing import Optional
 
 from .db import SessionLocal
 from .models import Capture
+
+logger = logging.getLogger(__name__)
 
 
 """
@@ -22,7 +25,7 @@ No AI, clarification, or RTM integration is performed here.
 """
 
 
-POLL_INTERVAL_SECONDS = 60
+POLL_INTERVAL_SECONDS = 60  # 1 hour for production
 
 
 def _get_env(name: str, default: Optional[str] = None) -> Optional[str]:
@@ -30,13 +33,6 @@ def _get_env(name: str, default: Optional[str] = None) -> Optional[str]:
     return value
 
 
-def _build_gmail_search_query() -> str:
-    """
-    Build the Gmail search query string.
-
-    from:jiaarnio@gmail.com AND label:gtd-input AND -label:gtd-processed
-    """
-    return 'from:jiaarnio@gmail.com label:gtd-input -label:gtd-processed'
 
 
 def _open_imap_connection() -> Optional[imaplib.IMAP4_SSL]:
@@ -47,6 +43,14 @@ def _open_imap_connection() -> Optional[imaplib.IMAP4_SSL]:
     if not user or not password:
         # Without credentials we simply skip ingestion; this keeps the
         # system runnable without email configured.
+        has_user = bool(os.environ.get("IMAP_USERNAME"))
+        has_pass = bool(os.environ.get("IMAP_PASSWORD"))
+        logger.info(
+            "IMAP credentials not configured, skipping email ingestion "
+            "(IMAP_USERNAME=%s, IMAP_PASSWORD=%s)",
+            "set" if has_user else "missing",
+            "set" if has_pass else "missing",
+        )
         return None
 
     port_raw = _get_env("IMAP_PORT", "993")
@@ -55,13 +59,15 @@ def _open_imap_connection() -> Optional[imaplib.IMAP4_SSL]:
     except ValueError:
         port = 993
 
-    client = imaplib.IMAP4_SSL(host, port)
-    client.login(user, password)
-
-    # Select INBOX in read-write mode so labels can be updated later if
-    # desired. For now we do not modify labels on failure.
-    client.select("INBOX")
-    return client
+    try:
+        logger.info(f"Connecting to IMAP {host}:{port} as {user}")
+        client = imaplib.IMAP4_SSL(host, port)
+        client.login(user, password)
+        logger.info("IMAP connection established")
+        return client
+    except Exception as e:
+        logger.error(f"Failed to connect to IMAP: {e}")
+        return None
 
 
 def _get_message_body(msg) -> str:
@@ -105,23 +111,17 @@ def _build_gmail_link(message_id: str) -> str:
 
 
 def _process_message(db_session, uid: bytes, raw_email: bytes) -> None:
+    """
+    Process an email message and create a capture.
+
+    No idempotency check needed - gtdinput/gtdprocessed labels are mutually exclusive.
+    """
     msg = message_from_bytes(raw_email)
     message_id = _get_message_id(msg)
     if not message_id:
-        # Without a stable id we still capture, but we lose strong
-        # idempotency guarantees. Use the UID as a fallback source_id.
         source_id = uid.decode()
     else:
         source_id = message_id
-
-    # Idempotency: check if we have already captured this email.
-    existing = (
-        db_session.query(Capture)
-        .filter(Capture.source == "email", Capture.source_id == source_id)
-        .first()
-    )
-    if existing:
-        return
 
     body = _get_message_body(msg)
     source_link = _build_gmail_link(message_id) if message_id else None
@@ -142,46 +142,86 @@ def _poll_once() -> None:
         return
 
     try:
-        # Use Gmail's X-GM-RAW search to match the specified query.
-        query = _build_gmail_search_query()
-        typ, data = client.uid("SEARCH", "X-GM-RAW", query)
+        # Select the gtdinput mailbox (Gmail label as IMAP folder)
+        logger.info("Selecting gtdinput mailbox")
+        typ, data = client.select("gtdinput")
         if typ != "OK":
+            logger.warning(f"Failed to select gtdinput mailbox: {typ} {data}")
+            return
+
+        # Search for all messages in gtdinput mailbox
+        # Idempotency is handled by message-id check in _process_message
+        logger.info("Searching for all messages in gtdinput")
+        typ, data = client.search(None, "ALL")
+        if typ != "OK":
+            logger.warning(f"Search failed: {typ}")
             return
 
         uids = data[0].split()
+        logger.info(f"Found {len(uids)} emails in gtdinput")
         if not uids:
             return
 
         db_session = SessionLocal()
         try:
+            processed = 0
             for uid in uids:
-                typ, msg_data = client.uid("FETCH", uid, "(RFC822)")
+                typ, msg_data = client.fetch(uid, "(RFC822)")
                 if typ != "OK" or not msg_data or msg_data[0] is None:
+                    logger.warning(f"Failed to fetch email UID {uid.decode()}")
                     continue
                 raw_email = msg_data[0][1]
+
+                # Process the message and store in DB
                 _process_message(db_session, uid, raw_email)
+
+                # Move from gtdinput to gtdprocessed (mutually exclusive labels)
+                try:
+                    # Add gtdprocessed label
+                    typ, copy_data = client.copy(uid, "gtdprocessed")
+                    if typ != "OK":
+                        logger.warning(f"Failed to copy to gtdprocessed: {typ}")
+                        continue
+
+                    # Remove gtdinput label by deleting from this mailbox
+                    typ, store_data = client.store(uid, "+FLAGS", "(\\Deleted)")
+                    if typ != "OK":
+                        logger.warning(f"Failed to mark for deletion: {typ}")
+                        continue
+
+                    logger.info(f"Moved email {uid.decode()} from gtdinput to gtdprocessed")
+                    processed += 1
+                except Exception as e:
+                    logger.warning(f"Error moving email {uid.decode()}: {e}")
+
+            # Expunge to finalize deletion (remove from gtdinput)
+            if processed > 0:
+                client.expunge()
+
+            logger.info(f"Processed {processed} new emails from gtdinput")
         finally:
             db_session.close()
+    except Exception as e:
+        logger.error(f"Error during email polling: {e}", exc_info=True)
     finally:
         try:
             client.logout()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Error closing IMAP connection: {e}")
 
 
 def run_imap_poller() -> None:
     """
     Simple polling loop that runs in a background thread.
 
-    Failures are swallowed to avoid crashing the main application; they
-    will be visible through logs when logging is added.
+    Failures are logged but do not crash the main application.
     """
+    logger.info("Starting IMAP poller thread")
     while True:
         try:
             _poll_once()
-        except Exception:
-            # Intentionally minimal: we do not crash the loop.
-            pass
+        except Exception as e:
+            logger.error(f"Unexpected error in IMAP poller loop: {e}", exc_info=True)
         time.sleep(POLL_INTERVAL_SECONDS)
 
 
@@ -190,6 +230,8 @@ def start_background_poller() -> None:
     Start the poller in a daemon thread. Intended to be called from
     FastAPI startup.
     """
+    logger.info("Starting background IMAP poller")
     thread = threading.Thread(target=run_imap_poller, name="imap-poller", daemon=True)
     thread.start()
+    logger.info("IMAP poller thread started")
 

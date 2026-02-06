@@ -5,8 +5,14 @@ services:
     build: .
     container_name: gtd-backend
     restart: unless-stopped
+    env_file:
+      - .env
     environment:
       - DATABASE_PATH=/app/data/gtd.db
+      - IMAP_HOST=${IMAP_HOST:-imap.gmail.com}
+      - IMAP_PORT=${IMAP_PORT:-993}
+      - IMAP_USERNAME=${IMAP_USERNAME}
+      - IMAP_PASSWORD=${IMAP_PASSWORD}
     volumes:
       - ./data:/app/data
     ports:

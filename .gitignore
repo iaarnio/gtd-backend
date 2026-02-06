@@ -1,0 +1,27 @@
+# --- Secrets & environment ---
+.env
+.env.*
+!.env.example
+
+# --- Runtime data ---
+data/
+*.db
+*.sqlite
+*.sqlite3
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+.venv/
+venv/
+
+# --- Editor / OS ---
+.DS_Store
+.idea/
+.vscode/
+
+# --- Logs ---
+*.log
