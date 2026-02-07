@@ -54,7 +54,9 @@ def _safe_params_view(params: Dict[str, str]) -> Dict[str, str]:
 
 
 def is_configured() -> bool:
-    return bool(_get_env("RTM_API_KEY") and _get_env("RTM_SHARED_SECRET") and _get_env("RTM_AUTH_TOKEN"))
+    # Check if RTM API credentials are configured.
+    # Auth token is now stored in database (after bootstrap from .env), not required here.
+    return bool(_get_env("RTM_API_KEY") and _get_env("RTM_SHARED_SECRET"))
 
 
 def _sign_params(shared_secret: str, params: Dict[str, str]) -> str:
@@ -117,15 +119,10 @@ def call(method: str, params: Dict[str, str], timeout_seconds: int = 20, auth_to
 
 def create_timeline(auth_token: Optional[str] = None) -> str:
     data = call("rtm.timelines.create", {}, auth_token=auth_token)
-    if "raw" in data:
-        # extract timeline from XML
-        import re
-        m = re.search(r"<timeline>(\d+)</timeline>", data["raw"])
-        if not m:
-            raise RuntimeError(f"Failed to parse timeline: {data['raw']}")
-        return m.group(1)
+    if "timeline" in data:
+        return data["timeline"]
 
-    raise RuntimeError(f"Unexpected response: {data}")
+    raise RuntimeError(f"Unexpected response from rtm.timelines.create: {data}")
 
 
 def add_task(timeline: str, name: str, auth_token: Optional[str] = None) -> Dict[str, str]:
@@ -135,16 +132,35 @@ def add_task(timeline: str, name: str, auth_token: Optional[str] = None) -> Dict
     Returns dict with list_id, taskseries_id, task_id.
     """
     data = call("rtm.tasks.add", {"timeline": timeline, "name": name, "parse": "1"}, auth_token=auth_token)
-    rsp = data.get("rsp", {})
-    if rsp.get("stat") != "ok":
-        raise RuntimeError(f"RTM task add failed: {data}")
 
-    task = rsp["list"]["taskseries"]["task"]
-    return {
-        "list_id": rsp["list"]["id"],
-        "taskseries_id": rsp["list"]["taskseries"]["id"],
-        "task_id": task["id"],
-    }
+    # Parse XML response (call() returns {"raw": xml_text} for rtm.tasks.add)
+    if "raw" in data:
+        import xml.etree.ElementTree as ET
+        root = ET.fromstring(data["raw"])
+        if root.get("stat") != "ok":
+            err = root.find("err")
+            err_msg = err.get("msg") if err is not None else "Unknown error"
+            raise RuntimeError(f"RTM task add failed: {err_msg}")
+
+        list_elem = root.find("list")
+        if list_elem is None:
+            raise RuntimeError(f"RTM task add response missing list element: {data['raw']}")
+
+        taskseries = list_elem.find("taskseries")
+        if taskseries is None:
+            raise RuntimeError(f"RTM task add response missing taskseries: {data['raw']}")
+
+        task = taskseries.find("task")
+        if task is None:
+            raise RuntimeError(f"RTM task add response missing task: {data['raw']}")
+
+        return {
+            "list_id": list_elem.get("id"),
+            "taskseries_id": taskseries.get("id"),
+            "task_id": task.get("id"),
+        }
+
+    raise RuntimeError(f"Unexpected response from rtm.tasks.add: {data}")
 
 
 def auth_check_token(token: str) -> Dict[str, Any]:
@@ -181,11 +197,10 @@ def auth_check_token(token: str) -> Dict[str, Any]:
 
     import xml.etree.ElementTree as ET
     root = ET.fromstring(response.text)
-    rsp = root.find("rsp")
 
-    # Convert XML to dict-like structure
-    if rsp is not None and rsp.get("stat") == "ok":
-        auth = rsp.find("auth")
+    # Convert XML to dict-like structure (root IS the <rsp> element)
+    if root.get("stat") == "ok":
+        auth = root.find("auth")
         if auth is not None:
             user = auth.find("user")
             return {
@@ -201,7 +216,7 @@ def auth_check_token(token: str) -> Dict[str, Any]:
             }
 
     # Extract error if present
-    err = rsp.find("err") if rsp is not None else None
+    err = root.find("err")
     if err is not None:
         return {
             "stat": "fail",
@@ -289,10 +304,10 @@ def auth_get_token(frob: str) -> Dict[str, Any]:
 
     import xml.etree.ElementTree as ET
     root = ET.fromstring(response.text)
-    rsp = root.find("rsp")
 
-    if rsp is not None and rsp.get("stat") == "ok":
-        auth = rsp.find("auth")
+    # Root IS the <rsp> element
+    if root.get("stat") == "ok":
+        auth = root.find("auth")
         if auth is not None:
             user = auth.find("user")
             return {
@@ -306,7 +321,7 @@ def auth_get_token(frob: str) -> Dict[str, Any]:
             }
 
     # Extract error if present
-    err = rsp.find("err") if rsp is not None else None
+    err = root.find("err")
     if err is not None:
         return {
             "stat": "fail",

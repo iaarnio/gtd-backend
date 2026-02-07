@@ -208,6 +208,7 @@ def _poll_once() -> None:
     api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
         # Without an API key, clarification is simply disabled.
+        logger.debug("OPENAI_API_KEY not configured, clarification disabled")
         return
 
     base_url = os.environ.get("OPENAI_BASE_URL", "").strip()
@@ -225,8 +226,10 @@ def _poll_once() -> None:
             .order_by(Capture.created_at.asc())
             .all()
         )
+        logger.info(f"Clarification poll: found {len(pending)} pending captures")
 
         for capture in pending:
+            logger.info(f"Clarifying capture {capture.id}: {capture.raw_text[:50]}...")
             result = _clarify_capture(api_key, base_url, capture)
             if result is None:
                 # Clarification failed - save error info for user visibility
@@ -240,6 +243,7 @@ def _poll_once() -> None:
                 logger.warning(f"Saved clarification error info for capture {capture.id}")
             else:
                 capture.clarify_json = result
+                logger.info(f"Successfully clarified capture {capture.id}")
             db.add(capture)
             db.commit()
     finally:
@@ -252,9 +256,13 @@ def run_clarification_loop() -> None:
     captures.
     """
     logger.info("Clarification loop started, polling every 30 seconds")
+    poll_count = 0
     while True:
         try:
+            poll_count += 1
+            logger.info(f"Clarification poll #{poll_count} starting...")
             _poll_once()
+            logger.info(f"Clarification poll #{poll_count} complete")
         except Exception as e:
             # Failures should not crash the loop; they will be surfaced
             # by logs in a later hardening step.

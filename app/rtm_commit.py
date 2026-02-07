@@ -313,15 +313,20 @@ def _ensure_anchor_for_pending_approvals(db) -> None:
 
 
 def _poll_once() -> None:
-    if not is_configured():
+    import os
+    # Check if RTM API credentials are configured
+    api_key = os.environ.get("RTM_API_KEY")
+    shared_secret = os.environ.get("RTM_SHARED_SECRET")
+
+    if not api_key or not shared_secret:
         # RTM is optional; without config, commit loop is disabled.
-        logger.debug("RTM not configured, skipping commit loop")
+        logger.debug("RTM API credentials not configured, skipping commit loop")
         return
 
-    # Check if RTM auth is valid before attempting commits
+    # Check if RTM auth token is valid (stored in database after bootstrap)
     from .rtm_auth import is_rtm_auth_valid
     if not is_rtm_auth_valid():
-        logger.debug("RTM auth not valid, skipping commit loop")
+        logger.info("RTM auth token not valid or not configured, skipping commit loop")
         return
 
     db = SessionLocal()
@@ -332,10 +337,10 @@ def _poll_once() -> None:
             .order_by(Capture.created_at.asc())
             .all()
         )
-        logger.debug(f"Found {len(approved)} approved captures to commit")
+        logger.info(f"RTM commit poll: found {len(approved)} approved captures to commit")
         for capture in approved:
             if not _should_attempt_commit(capture):
-                logger.debug(f"Skipping capture {capture.id}, commit state prevents it")
+                logger.info(f"Skipping capture {capture.id}, commit state prevents it")
                 continue
             logger.info(f"Committing capture {capture.id} to RTM")
             _commit_one_capture(db, capture)
