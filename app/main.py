@@ -53,6 +53,47 @@ def health_check() -> dict:
     return {"status": "ok"}
 
 
+@app.get("/audit-log", response_class=HTMLResponse)
+def audit_log(request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
+    """
+    View complete audit trail of all captures with their full state:
+    - Ingestion details (source, email_id, timestamps)
+    - Clarification results
+    - User decisions
+    - RTM sync status
+    """
+    # Get all captures ordered by creation time (newest first)
+    captures = (
+        db.query(models.Capture)
+        .order_by(models.Capture.created_at.desc())
+        .all()
+    )
+
+    # Enrich captures with parsed clarification data
+    enriched = []
+    for c in captures:
+        clar = _parse_clarify_json(c.clarify_json) or {}
+        enriched.append({
+            "id": c.id,
+            "created_at": c.created_at,
+            "source": c.source,
+            "email_id": c.email_id,
+            "email_link": c.email_link,
+            "raw_text": c.raw_text[:100],  # First 100 chars
+            "clarified_text": clar.get("clarified_text", ""),
+            "decision_status": c.decision_status,
+            "decision_at": c.decision_at,
+            "commit_status": c.commit_status,
+            "last_commit_attempt_at": c.last_commit_attempt_at,
+            "rtm_task_id": c.rtm_task_id,
+        })
+
+    return templates.TemplateResponse(
+        "audit_log.html",
+        {"request": request, "captures": enriched},
+    )
+
+
 def _parse_clarify_json(raw: Optional[str]) -> Optional[Dict[str, Any]]:
     """
     Helper to safely parse clarify_json text into a dictionary for the UI.
