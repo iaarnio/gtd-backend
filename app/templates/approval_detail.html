@@ -3,7 +3,9 @@
 {% block title %}Capture {{ capture.id }}{% endblock %}
 
 {% block content %}
-<h2>Capture {{ capture.id }}</h2>
+<h2>Pending approvals</h2>
+
+<h3>Capture {{ capture.id }}</h3>
 
 <p>
     <span class="badge badge-{{ capture.decision_status }}">{{ capture.decision_status }}</span>
@@ -12,80 +14,235 @@
 
 {% if capture.source_link %}
 <p>
-    Source link:
-    <a href="{{ capture.source_link }}" target="_blank" rel="noopener noreferrer">
-        Open original
-    </a>
+    <a href="{{ capture.source_link }}" target="_blank" rel="noopener noreferrer">Open original</a>
 </p>
 {% endif %}
-
-<details>
-    <summary><strong>Raw text</strong></summary>
-    <pre>{{ capture.raw_text }}</pre>
-</details>
 
 {% set clar = clar_dict %}
 
-<h3>Clarified interpretation</h3>
+<style>
+.form-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+    margin: 20px 0;
+}
 
-<p><strong>Confidence:</strong>
-    {% if clar and ('confidence_score' in clar or 'confidence' in clar) %}
-        {% if 'confidence_score' in clar and clar['confidence_score'] is not none %}
-            <span class="confidence">{{ "%.2f"|format(clar['confidence_score']) }}</span>
-        {% elif 'confidence' in clar and clar['confidence'] is not none %}
-            <span class="confidence">{{ "%.2f"|format(clar['confidence']) }}</span>
-        {% else %}
-            <em>n/a</em>
-        {% endif %}
-    {% else %}
-        <em>n/a</em>
-    {% endif %}
-</p>
+.form-field {
+    display: flex;
+    flex-direction: column;
+}
 
-<ul>
-    <li><strong>Project</strong>:
-        {% if clar and 'project_name' in clar and clar['project_name'] %}
-            {{ clar['project_name'] }}
-        {% elif clar and 'project' in clar and clar['project'] %}
-            {{ clar['project'] }}
-        {% else %}
-            <em>(none)</em>
-        {% endif %}
-    </li>
-    <li><strong>Next action</strong>:
-        {% if clar and 'next_action' in clar and clar['next_action'] %}{{ clar['next_action'] }}{% else %}<em>(none)</em>{% endif %}
-    </li>
-    <li><strong>Context</strong>:
-        {% if clar and 'suggested_context' in clar and clar['suggested_context'] %}{{ clar['suggested_context'] }}{% else %}<em>(none)</em>{% endif %}
-    </li>
-    <li><strong>Due date</strong>:
-        {% if clar and 'due_date' in clar and clar['due_date'] %}{{ clar['due_date'] }}{% else %}<em>(none)</em>{% endif %}
-    </li>
-    <li><strong>Notes</strong>:
-        {% if clar and 'notes' in clar and clar['notes'] %}{{ clar['notes'] }}{% else %}<em>(none)</em>{% endif %}
-    </li>
-</ul>
+.form-field label {
+    font-weight: bold;
+    margin-bottom: 5px;
+}
 
-<h3>Edit clarification JSON</h3>
+.form-field input,
+.form-field select,
+.form-field textarea {
+    padding: 8px;
+    font-size: 14px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-family: inherit;
+}
+
+.form-field textarea {
+    resize: vertical;
+    min-height: 60px;
+}
+
+.task-row {
+    display: flex;
+    gap: 10px;
+    align-items: flex-end;
+}
+
+.task-row input {
+    flex: 1;
+}
+
+.checkbox-group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.checkbox-group input[type="checkbox"] {
+    width: 30px;
+    height: 30px;
+    cursor: pointer;
+}
+
+.button-group {
+    display: flex;
+    gap: 10px;
+    margin: 30px 0;
+}
+
+.button-group button {
+    flex: 1;
+    padding: 15px;
+    font-size: 16px;
+    font-weight: bold;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.approve {
+    background-color: #4CAF50;
+    color: white;
+}
+
+.save {
+    background-color: #FDD835;
+    color: black;
+}
+
+.reject {
+    background-color: #F44336;
+    color: white;
+}
+
+.section-title {
+    font-weight: bold;
+    margin-top: 20px;
+    margin-bottom: 10px;
+    color: #666;
+}
+
+details {
+    margin: 20px 0;
+    padding: 10px;
+    background-color: #f5f5f5;
+    border-radius: 4px;
+}
+
+details summary {
+    cursor: pointer;
+    font-weight: bold;
+    color: #d32f2f;
+}
+
+details pre {
+    background-color: white;
+    padding: 10px;
+    border-radius: 4px;
+    overflow-x: auto;
+}
+</style>
+
 <form method="post" action="/approvals/{{ capture.id }}/clarification">
-    <textarea name="clarification_json">{{ clarification_json }}</textarea>
-    <div class="actions">
-        <button type="submit">Save clarification</button>
+    <input type="hidden" name="clarification_json_raw" id="clarification_json_raw">
+
+    <div class="form-grid">
+        <!-- Left column -->
+        <div>
+            <div class="form-field">
+                <label for="project">Project:</label>
+                <input type="text" id="project" name="project_name" value="{{ clar.get('project_name', '') or '' }}">
+            </div>
+
+            <div class="form-field">
+                <label for="project_shortname">Project short name:</label>
+                <input type="text" id="project_shortname" name="project_shortname"
+                       value="{{ clar.get('project_shortname', '') or '' }}"
+                       placeholder="e.g., KITARA"
+                       style="text-transform: uppercase;">
+            </div>
+
+            <div class="form-field">
+                <label>Task:</label>
+                <div class="task-row">
+                    <input type="text" name="next_action" value="{{ clar.get('next_action', '') or '' }}">
+                    <div class="checkbox-group">
+                        <label for="is_next_action">NA:</label>
+                        <input type="checkbox" id="is_next_action" name="is_next_action"
+                               {% if clar.get('type') == 'next_action' %}checked{% endif %}>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Right column -->
+        <div>
+            <div class="form-field">
+                <label for="context">Context:</label>
+                <select id="context" name="suggested_context">
+                    <option value="">-- None --</option>
+                    <option value="Work" {% if clar.get('suggested_context') == 'Work' %}selected{% endif %}>Work</option>
+                    <option value="Home" {% if clar.get('suggested_context') == 'Home' %}selected{% endif %}>Home</option>
+                    <option value="Phone" {% if clar.get('suggested_context') == 'Phone' %}selected{% endif %}>Phone</option>
+                    <option value="Computer" {% if clar.get('suggested_context') == 'Computer' %}selected{% endif %}>Computer</option>
+                    <option value="Errands" {% if clar.get('suggested_context') == 'Errands' %}selected{% endif %}>Errands</option>
+                    <option value="Waiting" {% if clar.get('suggested_context') == 'Waiting' %}selected{% endif %}>Waiting</option>
+                </select>
+            </div>
+
+            <div class="form-field">
+                <label for="due_date">Due Date:</label>
+                <input type="date" id="due_date" name="due_date" value="{{ clar.get('due_date', '') or '' }}">
+            </div>
+
+            <div class="form-field">
+                <label for="notes">Notes:</label>
+                <textarea id="notes" name="notes">{{ clar.get('notes', '') or '' }}</textarea>
+            </div>
+        </div>
     </div>
+
+    <!-- Action buttons -->
+    {% if capture.decision_status == "proposed" %}
+    <div class="button-group">
+        <button type="submit" class="approve" formaction="/approvals/{{ capture.id }}/approve"
+                onclick="this.form.action='/approvals/{{ capture.id }}/approve'">Approve</button>
+        <button type="submit" class="save">Save</button>
+        <button type="submit" class="reject" formaction="/approvals/{{ capture.id }}/reject"
+                onclick="this.form.action='/approvals/{{ capture.id }}/reject'">Reject</button>
+    </div>
+    {% else %}
+    <p><em>This capture has already been {{ capture.decision_status }}.</em></p>
+    {% endif %}
+
+    <!-- Collapsible sections for additional info -->
+    <div class="section-title">Additional Information</div>
+
+    {% if clar.get('ambiguities') %}
+    <details>
+        <summary>Ambiguities</summary>
+        <p>{{ clar.get('ambiguities') }}</p>
+    </details>
+    {% endif %}
+
+    <details>
+        <summary>Raw text</summary>
+        <pre>{{ capture.raw_text }}</pre>
+    </details>
 </form>
 
-<h3>Decision</h3>
-{% if capture.decision_status == "proposed" %}
-<div class="actions">
-    <form method="post" action="/approvals/{{ capture.id }}/approve">
-        <button type="submit" class="approve">Approve</button>
-    </form>
-    <form method="post" action="/approvals/{{ capture.id }}/reject">
-        <button type="submit" class="reject">Reject</button>
-    </form>
-</div>
-{% else %}
-<p>This capture has already been {{ capture.decision_status }} and cannot be changed.</p>
-{% endif %}
+<script>
+document.querySelector('form').addEventListener('submit', function(e) {
+    // Build clarification JSON from form fields
+    const clarificationData = {
+        type: document.getElementById('is_next_action').checked ? 'next_action' : 'project',
+        clarified_text: document.getElementById('project').value || document.getElementById('next_action').value,
+        project_name: document.getElementById('project').value || null,
+        project_shortname: document.getElementById('project_shortname').value.toUpperCase() || null,
+        next_action: document.getElementById('next_action').value || null,
+        suggested_context: document.getElementById('context').value || null,
+        due_date: document.getElementById('due_date').value || null,
+        notes: document.getElementById('notes').value || null,
+        ambiguities: "{{ clar.get('ambiguities', '') or '' }}",
+        suggested_tool: "{{ clar.get('suggested_tool', '') or '' }}",
+        confidence_score: {{ clar.get('confidence_score', 0.5) or 0.5 }}
+    };
+
+    // Set the hidden field with JSON
+    document.getElementById('clarification_json_raw').name = 'data';
+    document.getElementById('clarification_json_raw').value = JSON.stringify(clarificationData);
+});
+</script>
 
 {% endblock %}

@@ -23,5 +23,8 @@ venv/
 .idea/
 .vscode/
 
+# --- AI ---
+.claude/
+
 # --- Logs ---
 *.log
