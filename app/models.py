@@ -27,6 +27,8 @@ class Capture(Base):
     source = Column(String(50), nullable=False)
     source_id = Column(String(255), nullable=True, index=True)
     source_link = Column(Text, nullable=True)
+    email_id = Column(String(255), nullable=True, index=True)
+    email_link = Column(Text, nullable=True)
 
     # Clarification result stored verbatim as JSON text
     clarify_json = Column(Text, nullable=True)

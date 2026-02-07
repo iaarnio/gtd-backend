@@ -131,6 +131,8 @@ def _process_message(db_session, uid: bytes, raw_email: bytes) -> None:
         source="email",
         source_id=source_id,
         source_link=source_link,
+        email_id=message_id,
+        email_link=source_link,
     )
     db_session.add(capture)
     db_session.commit()
