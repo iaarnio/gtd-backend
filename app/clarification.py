@@ -59,11 +59,11 @@ Language rules:
 
 Classification rules:
 - Decide whether the capture is:
-  - a single standalone next action (small, self-contained, no further steps needed)
+  - a single standalone action (small, self-contained, no further steps needed)
   - a project (requires more than one step, has a larger goal)
   - or non-actionable
 - Key distinction:
-  - "Soita äidille" = standalone next_action (just one step, done)
+  - "Soita äidille" = standalone action (just one step, done)
   - "Osta maali" IN THE CONTEXT OF "remontoi asunto" = project (part of larger goal)
 - If it is a project OR the capture is clearly part of a larger goal, you MUST:
   - provide a clear project_name (infer if needed from context)
@@ -72,17 +72,17 @@ Classification rules:
     - Should be 2-6 uppercase letters
     - Should be memorable and unique among projects
     - Derived from the project's core theme
-- ONLY classify as standalone next_action if:
+- ONLY classify as standalone action if:
   - It's a single, self-contained action
   - No implicit larger goal or project context
   - Examples: call someone, write an email, file a document, buy one item
-- A next action must be a physical, visible action.
+- A action must be a physical, visible action.
 - If non-actionable, choose the most appropriate category.
 
-When proposing a next action:
+When proposing an action:
 - It must be the very first doable step.
 - It must be specific enough that it could be started immediately without further thinking.
-- Next actions should start with a clear imperative verb.
+- Actions should start with a clear imperative verb.
 - Prefer verbs from this list:
   Selvitä, Listaa, Etsi, Lue, Kirjoita, Soita, Lähetä, Osta, Hae, Vie, Täytä, Päivitä
 - Avoid vague verbs like "suunnittele", "pohdi", "hoida".
@@ -100,9 +100,9 @@ Rules for assigning a context:
 If unsure, DO NOT assign a context.
 
 Tool selection rules:
-- If type is "project" or "next_action", the suggested_tool MUST be "RTM".
+- If type is "project" or "action", the suggested_tool MUST be "RTM".
 - Obsidian is ONLY for non-actionable reference material or thinking notes.
-- Never suggest Obsidian for anything that has a next action.
+- Never suggest Obsidian for anything that has an action or project.
 
 Confidence:
 - confidence_score MUST be a float between 0.0 and 1.0
@@ -110,7 +110,7 @@ Confidence:
 
 Return ONLY valid JSON matching this schema exactly:
 {
-  "type": "project" | "next_action" | "non_actionable",
+  "type": "project" | "action" | "next_action" | "non_actionable",
   "clarified_text": string,
   "project_name": string | null,
   "project_shortname": string | null,

@@ -50,16 +50,6 @@ def _parse_json_maybe(raw: Optional[str]) -> Optional[Dict[str, Any]]:
     return None
 
 
-def _commit_state(capture: Capture) -> Optional[Dict[str, Any]]:
-    return _parse_json_maybe(capture.external_commit_state)
-
-
-def _set_commit_state(db, capture: Capture, state: Dict[str, Any]) -> None:
-    capture.external_commit_state = json.dumps(state, ensure_ascii=False)
-    db.add(capture)
-    db.commit()
-
-
 def _compute_task_name_and_tags(clar: Dict[str, Any]) -> Tuple[str, str]:
     """
     Build a single RTM Smart Add string:
@@ -117,57 +107,25 @@ def _compute_task_name_and_tags(clar: Dict[str, Any]) -> Tuple[str, str]:
     return smart_add, task_name
 
 
-def _should_attempt_commit(capture: Capture) -> bool:
-    if capture.decision_status != "approved":
-        return False
-
-    state = _commit_state(capture)
-    if state is None:
-        return True  # never attempted
-
-    status = state.get("status")
-    # We retry only explicit failures. Unknown / in_progress are not retried automatically.
-    return status == "failed"
 
 
 def _commit_one_capture(db, capture: Capture) -> None:
     clar = _parse_json_maybe(capture.clarify_json) or {}
-
     ctype = (clar.get("type") or "").strip()
 
     # For projects, project_shortname is required from clarification.
     if ctype == "project":
         project_shortname = (clar.get("project_shortname") or "").strip().upper()
         if not project_shortname:
-            logger.warning(f"Skipping capture {capture.id}: missing project_shortname")
-            _set_commit_state(
-                db,
-                capture,
-                {
-                    "provider": "rtm",
-                    "status": "skipped",
-                    "reason": "missing_project_shortname",
-                    "updated_at": _now_iso(),
-                },
-            )
+            logger.warning(f"Capture {capture.id}: missing project_shortname, marking as failed")
+            capture.commit_status = "failed"
+            capture.last_commit_attempt_at = datetime.utcnow()
+            db.add(capture)
+            db.commit()
             return
 
     smart_add, task_name = _compute_task_name_and_tags(clar)
     logger.debug(f"Capture {capture.id}: task_name={task_name}, smart_add={smart_add}")
-
-    # Mark in_progress before any external side effect.
-    prev = _commit_state(capture) or {}
-    attempts = int(prev.get("attempts") or 0) + 1
-    in_progress = {
-        "provider": "rtm",
-        "status": "in_progress",
-        "attempts": attempts,
-        "task_name": task_name,
-        "smart_add": smart_add,
-        "started_at": _now_iso(),
-        "updated_at": _now_iso(),
-    }
-    _set_commit_state(db, capture, in_progress)
 
     # External side effect (RTM)
     try:
@@ -180,29 +138,24 @@ def _commit_one_capture(db, capture: Capture) -> None:
         logger.debug(f"Creating timeline and adding task to RTM for capture {capture.id}")
         timeline = create_timeline(auth_token=auth_record.auth_token)
         ids = add_task(timeline=timeline, name=smart_add, auth_token=auth_record.auth_token)
+
+        # Success: update commit_status
+        capture.commit_status = "committed"
+        capture.last_commit_attempt_at = datetime.utcnow()
+        capture.rtm_task_id = ids.get("task_id")
+        capture.rtm_taskseries_id = ids.get("taskseries_id")
+        capture.rtm_list_id = ids.get("list_id")
         logger.info(f"Successfully committed capture {capture.id} to RTM: {ids}")
     except Exception as exc:
-        # If we cannot be sure whether RTM created the task (timeouts etc.),
-        # we mark this as unknown and do not retry automatically.
         logger.error(f"Failed to commit capture {capture.id} to RTM: {exc}", exc_info=True)
-        unknown = {
-            **in_progress,
-            "status": "unknown",
-            "updated_at": _now_iso(),
-            "last_error": str(exc),
-        }
-        _set_commit_state(db, capture, unknown)
+        capture.commit_status = "failed"
+        capture.last_commit_attempt_at = datetime.utcnow()
+        db.add(capture)
+        db.commit()
         return
 
-    committed = {
-        **in_progress,
-        "status": "committed",
-        "updated_at": _now_iso(),
-        "committed_at": _now_iso(),
-        "timeline": timeline,
-        "rtm": ids,
-    }
-    _set_commit_state(db, capture, committed)
+    db.add(capture)
+    db.commit()
 
 
 def _get_active_anchor(db, today: date) -> Optional[Anchor]:
@@ -318,17 +271,18 @@ def _poll_once() -> None:
 
     db = SessionLocal()
     try:
-        approved = (
+        # Only fetch captures ready for commit: approved + not yet committed
+        pending_commits = (
             db.query(Capture)
-            .filter(Capture.decision_status == "approved")
+            .filter(
+                Capture.decision_status == "approved",
+                Capture.commit_status.in_(["pending", "failed"])
+            )
             .order_by(Capture.created_at.asc())
             .all()
         )
-        logger.info(f"RTM commit poll: found {len(approved)} approved captures to commit")
-        for capture in approved:
-            if not _should_attempt_commit(capture):
-                logger.info(f"Skipping capture {capture.id}, commit state prevents it")
-                continue
+        logger.info(f"RTM commit poll: found {len(pending_commits)} captures ready to commit")
+        for capture in pending_commits:
             logger.info(f"Committing capture {capture.id} to RTM")
             _commit_one_capture(db, capture)
         # After processing approved captures, ensure a single anchor

@@ -105,20 +105,15 @@ def approvals_list(request: Request, db: Session = Depends(get_db)) -> HTMLRespo
 
     # Get approved captures that haven't been successfully committed yet
     # (still awaiting RTM sync)
-    approved = (
+    approved_pending = (
         db.query(models.Capture)
-        .filter(models.Capture.decision_status == "approved")
+        .filter(
+            models.Capture.decision_status == "approved",
+            models.Capture.commit_status != "committed"
+        )
         .order_by(models.Capture.created_at.asc())
         .all()
     )
-
-    # Filter approved to only show those not yet committed
-    approved_pending = []
-    for c in approved:
-        state = _parse_clarify_json(c.external_commit_state) if c.external_commit_state else None
-        # Show if status is not "committed" or "skipped"
-        if not state or state.get("status") not in ["committed", "skipped"]:
-            approved_pending.append(c)
 
     # Combine all captures awaiting action
     all_captures = proposed + approved_pending
@@ -128,23 +123,20 @@ def approvals_list(request: Request, db: Session = Depends(get_db)) -> HTMLRespo
     for c in all_captures:
         clar = _parse_clarify_json(c.clarify_json)
         clar = clar or {}
-        commit_state = _parse_clarify_json(c.external_commit_state) if c.external_commit_state else None
 
         # Determine status indicator
         if c.decision_status == "proposed":
             status_label = "Pending decision"
         else:
-            # approved - show RTM sync status
-            if commit_state:
-                commit_status = commit_state.get("status", "unknown")
-                if commit_status == "in_progress":
-                    status_label = "Syncing to RTM..."
-                elif commit_status == "unknown":
-                    status_label = "RTM sync unknown (may require manual recovery)"
-                else:
-                    status_label = f"RTM: {commit_status}"
-            else:
+            # approved - show RTM sync status based on commit_status
+            if c.commit_status == "pending":
                 status_label = "Approved, waiting for RTM sync"
+            elif c.commit_status == "failed":
+                status_label = "RTM sync failed (will retry)"
+            elif c.commit_status == "committed":
+                status_label = "Synced to RTM ✓"
+            else:
+                status_label = f"RTM: {c.commit_status}"
 
         # Wrap in a simple object-like dict for template attribute access
         enriched.append(
@@ -248,9 +240,9 @@ async def approval_update_clarification(
     })
 
     capture.clarify_json = json.dumps(clar, ensure_ascii=False)
-    # Clear commit state when clarification is updated so it will be reprocessed
+    # Reset commit status when clarification is updated so it will be reprocessed
     if capture.decision_status == "approved":
-        capture.external_commit_state = None
+        capture.commit_status = "pending"
     db.add(capture)
     db.commit()
 

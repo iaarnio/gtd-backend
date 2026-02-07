@@ -41,7 +41,26 @@ class Capture(Base):
     decision_at = Column(DateTime, nullable=True)
     decision_notes = Column(Text, nullable=True)
 
-    # External commit state, e.g. RTM task id or status marker
+    # Commit state (separate from decision_status)
+    # pending = not yet committed to RTM
+    # committed = successfully committed
+    # failed = commit was attempted but failed
+    commit_status = Column(
+        String(20),
+        nullable=False,
+        default="pending",
+        index=True,
+    )
+
+    # When this capture was last attempted to commit
+    last_commit_attempt_at = Column(DateTime, nullable=True)
+
+    # RTM task IDs and metadata from successful commit
+    rtm_task_id = Column(String(255), nullable=True)
+    rtm_taskseries_id = Column(String(255), nullable=True)
+    rtm_list_id = Column(String(255), nullable=True)
+
+    # Legacy field - kept for backwards compatibility
     external_commit_state = Column(Text, nullable=True)
 
 
