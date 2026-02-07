@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import threading
 import time
@@ -8,6 +9,8 @@ from typing import Any, Dict, Optional, Tuple
 from .db import SessionLocal
 from .models import Anchor, Capture
 from .rtm import add_task, create_timeline, is_configured
+
+logger = logging.getLogger(__name__)
 
 
 """
@@ -132,6 +135,7 @@ def _commit_one_capture(db, capture: Capture) -> None:
     # Only commit actionable items. Non-actionable captures remain approved but uncommitted.
     ctype = (clar.get("type") or "").strip()
     if ctype == "non_actionable":
+        logger.info(f"Skipping capture {capture.id}: non_actionable")
         _set_commit_state(
             db,
             capture,
@@ -148,6 +152,7 @@ def _commit_one_capture(db, capture: Capture) -> None:
     if ctype == "project":
         project_shortname = (clar.get("project_shortname") or "").strip().upper()
         if not project_shortname:
+            logger.warning(f"Skipping capture {capture.id}: missing project_shortname")
             _set_commit_state(
                 db,
                 capture,
@@ -161,6 +166,7 @@ def _commit_one_capture(db, capture: Capture) -> None:
             return
 
     smart_add, task_name = _compute_task_name_and_tags(clar)
+    logger.debug(f"Capture {capture.id}: task_name={task_name}, smart_add={smart_add}")
 
     # Mark in_progress before any external side effect.
     prev = _commit_state(capture) or {}
@@ -178,11 +184,20 @@ def _commit_one_capture(db, capture: Capture) -> None:
 
     # External side effect (RTM)
     try:
-        timeline = create_timeline()
-        ids = add_task(timeline=timeline, name=smart_add)
+        # Get auth token from DB
+        from .rtm_auth import get_rtm_auth
+        auth_record = get_rtm_auth()
+        if not auth_record or not auth_record.auth_token:
+            raise RuntimeError("No RTM auth token available")
+
+        logger.debug(f"Creating timeline and adding task to RTM for capture {capture.id}")
+        timeline = create_timeline(auth_token=auth_record.auth_token)
+        ids = add_task(timeline=timeline, name=smart_add, auth_token=auth_record.auth_token)
+        logger.info(f"Successfully committed capture {capture.id} to RTM: {ids}")
     except Exception as exc:
         # If we cannot be sure whether RTM created the task (timeouts etc.),
         # we mark this as unknown and do not retry automatically.
+        logger.error(f"Failed to commit capture {capture.id} to RTM: {exc}", exc_info=True)
         unknown = {
             **in_progress,
             "status": "unknown",
@@ -300,6 +315,13 @@ def _ensure_anchor_for_pending_approvals(db) -> None:
 def _poll_once() -> None:
     if not is_configured():
         # RTM is optional; without config, commit loop is disabled.
+        logger.debug("RTM not configured, skipping commit loop")
+        return
+
+    # Check if RTM auth is valid before attempting commits
+    from .rtm_auth import is_rtm_auth_valid
+    if not is_rtm_auth_valid():
+        logger.debug("RTM auth not valid, skipping commit loop")
         return
 
     db = SessionLocal()
@@ -310,9 +332,12 @@ def _poll_once() -> None:
             .order_by(Capture.created_at.asc())
             .all()
         )
+        logger.debug(f"Found {len(approved)} approved captures to commit")
         for capture in approved:
             if not _should_attempt_commit(capture):
+                logger.debug(f"Skipping capture {capture.id}, commit state prevents it")
                 continue
+            logger.info(f"Committing capture {capture.id} to RTM")
             _commit_one_capture(db, capture)
         # After processing approved captures, ensure a single anchor
         # task exists when there are pending approvals.
@@ -322,16 +347,19 @@ def _poll_once() -> None:
 
 
 def run_commit_loop() -> None:
+    logger.info("RTM commit loop started, polling every 30 seconds")
     while True:
         try:
             _poll_once()
-        except Exception:
+        except Exception as e:
             # Crash-safe: never bring the service down because RTM is failing.
-            pass
+            logger.error(f"Error in RTM commit loop: {e}", exc_info=True)
         time.sleep(POLL_INTERVAL_SECONDS)
 
 
 def start_background_committer() -> None:
+    logger.info("Starting background RTM committer loop")
     thread = threading.Thread(target=run_commit_loop, name="rtm-committer", daemon=True)
     thread.start()
+    logger.info("RTM committer thread started")
 

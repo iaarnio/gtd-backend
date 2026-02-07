@@ -76,3 +76,42 @@ class Anchor(Base):
     external_state = Column(Text, nullable=True)
 
 
+class RtmAuth(Base):
+    """
+    Stores RTM authentication state and credentials.
+
+    This is a singleton-like table (typically only one row) that tracks:
+    - The current valid auth token for RTM API calls
+    - When it was last validated
+    - Whether the token is currently valid
+    - User metadata from RTM
+    """
+
+    __tablename__ = "rtm_auth"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    # The RTM auth token used for API calls
+    auth_token = Column(Text, nullable=True)
+
+    # Expected permissions from RTM (e.g., "delete")
+    perms = Column(String(50), nullable=True)
+
+    # RTM username and user ID
+    username = Column(String(255), nullable=True)
+    user_id = Column(String(255), nullable=True)
+
+    # Is the current token valid?
+    valid = Column(String(20), nullable=False, default="unknown")  # unknown / valid / invalid
+
+    # When this auth record was created
+    created_at = Column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+    )
+
+    # When the token was last verified with RTM
+    last_checked_at = Column(DateTime, nullable=True)
+
+

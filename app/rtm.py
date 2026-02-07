@@ -26,6 +26,32 @@ def _get_env(name: str) -> Optional[str]:
     value = os.environ.get(name)
     return value
 
+def _redact(value: str, keep: int = 4) -> str:
+    """
+    Redact a sensitive value but keep length and last chars.
+    Example: abcdefgh -> ******efgh (len=8)
+    """
+    if value is None:
+        return "<None>"
+    if not isinstance(value, str):
+        return f"<{type(value).__name__}>"
+    if len(value) <= keep:
+        return "*" * len(value)
+    return "*" * (len(value) - keep) + value[-keep:]
+
+
+def _safe_params_view(params: Dict[str, str]) -> Dict[str, str]:
+    """
+    Return a logging-safe view of RTM params.
+    """
+    out = {}
+    for k, v in params.items():
+        if k in {"api_key", "auth_token", "api_sig"}:
+            out[k] = f"{_redact(v)} (len={len(v)})"
+        else:
+            out[k] = f"{v!r} (len={len(str(v))})"
+    return out
+
 
 def is_configured() -> bool:
     return bool(_get_env("RTM_API_KEY") and _get_env("RTM_SHARED_SECRET") and _get_env("RTM_AUTH_TOKEN"))
@@ -42,42 +68,73 @@ def _sign_params(shared_secret: str, params: Dict[str, str]) -> str:
     return hashlib.md5(raw).hexdigest()
 
 
-def call(method: str, params: Dict[str, str], timeout_seconds: int = 20) -> Dict[str, Any]:
+def call(method: str, params: Dict[str, str], timeout_seconds: int = 20, auth_token: Optional[str] = None) -> Dict[str, Any]:
     api_key = _get_env("RTM_API_KEY")
     shared_secret = _get_env("RTM_SHARED_SECRET")
-    auth_token = _get_env("RTM_AUTH_TOKEN")
+
+    # Use provided token, or fall back to environment variable
+    if auth_token is None:
+        auth_token = _get_env("RTM_AUTH_TOKEN")
 
     if not api_key or not shared_secret or not auth_token:
-        raise RuntimeError("RTM is not configured (missing RTM_API_KEY / RTM_SHARED_SECRET / RTM_AUTH_TOKEN)")
+        raise RuntimeError("RTM is not configured")
 
-    full: Dict[str, str] = {
+    base_params: Dict[str, str] = {
         "method": method,
         "api_key": api_key,
         "auth_token": auth_token,
-        "format": "json",
         **params,
     }
-    full["api_sig"] = _sign_params(shared_secret, full)
 
-    response = requests.get(RTM_API_BASE_URL, params=full, timeout=timeout_seconds)
+    api_sig = _sign_params(shared_secret, base_params)
+
+    request_params = {
+        **base_params,
+        "api_sig": api_sig,
+    }
+
+    # 🔒 RTM: GET only, no format param
+    response = requests.get(
+        RTM_API_BASE_URL,
+        params=request_params,
+        timeout=timeout_seconds,
+    )
     response.raise_for_status()
-    return response.json()
+
+    text = response.text
+
+    # timelines.create returns XML
+    if method == "rtm.timelines.create":
+        import re
+        m = re.search(r"<timeline>(\d+)</timeline>", text)
+        if not m:
+            raise RuntimeError(f"Failed to parse timeline: {text}")
+        return {"timeline": m.group(1)}
+
+    # tasks.add also returns XML
+    return {"raw": text}
 
 
-def create_timeline() -> str:
-    data = call("rtm.timelines.create", {})
-    if data.get("rsp", {}).get("stat") != "ok":
-        raise RuntimeError(f"RTM timeline creation failed: {data}")
-    return data["rsp"]["timeline"]
+def create_timeline(auth_token: Optional[str] = None) -> str:
+    data = call("rtm.timelines.create", {}, auth_token=auth_token)
+    if "raw" in data:
+        # extract timeline from XML
+        import re
+        m = re.search(r"<timeline>(\d+)</timeline>", data["raw"])
+        if not m:
+            raise RuntimeError(f"Failed to parse timeline: {data['raw']}")
+        return m.group(1)
+
+    raise RuntimeError(f"Unexpected response: {data}")
 
 
-def add_task(timeline: str, name: str) -> Dict[str, str]:
+def add_task(timeline: str, name: str, auth_token: Optional[str] = None) -> Dict[str, str]:
     """
     Create a new task via rtm.tasks.add.
 
     Returns dict with list_id, taskseries_id, task_id.
     """
-    data = call("rtm.tasks.add", {"timeline": timeline, "name": name, "parse": "1"})
+    data = call("rtm.tasks.add", {"timeline": timeline, "name": name, "parse": "1"}, auth_token=auth_token)
     rsp = data.get("rsp", {})
     if rsp.get("stat") != "ok":
         raise RuntimeError(f"RTM task add failed: {data}")
@@ -88,4 +145,176 @@ def add_task(timeline: str, name: str) -> Dict[str, str]:
         "taskseries_id": rsp["list"]["taskseries"]["id"],
         "task_id": task["id"],
     }
+
+
+def auth_check_token(token: str) -> Dict[str, Any]:
+    """
+    Verify that an auth token is valid and get user info.
+
+    Returns the full RTM response dict.
+    """
+    api_key = _get_env("RTM_API_KEY")
+    shared_secret = _get_env("RTM_SHARED_SECRET")
+
+    if not api_key or not shared_secret:
+        raise RuntimeError("RTM is not configured")
+
+    base_params: Dict[str, str] = {
+        "method": "rtm.auth.checkToken",
+        "api_key": api_key,
+        "auth_token": token,
+    }
+
+    api_sig = _sign_params(shared_secret, base_params)
+
+    request_params = {
+        **base_params,
+        "api_sig": api_sig,
+    }
+
+    response = requests.get(
+        RTM_API_BASE_URL,
+        params=request_params,
+        timeout=20,
+    )
+    response.raise_for_status()
+
+    import xml.etree.ElementTree as ET
+    root = ET.fromstring(response.text)
+    rsp = root.find("rsp")
+
+    # Convert XML to dict-like structure
+    if rsp is not None and rsp.get("stat") == "ok":
+        auth = rsp.find("auth")
+        if auth is not None:
+            user = auth.find("user")
+            return {
+                "stat": "ok",
+                "auth": {
+                    "token": auth.findtext("token"),
+                    "perms": auth.findtext("perms"),
+                    "user": {
+                        "id": user.get("id") if user is not None else None,
+                        "username": user.findtext("username") if user is not None else None,
+                    }
+                }
+            }
+
+    # Extract error if present
+    err = rsp.find("err") if rsp is not None else None
+    if err is not None:
+        return {
+            "stat": "fail",
+            "err": {
+                "code": err.get("code"),
+                "msg": err.get("msg"),
+            }
+        }
+
+    return {"stat": "fail", "err": {"msg": "Unknown error"}}
+
+
+def auth_get_frob() -> str:
+    """
+    Get a frob for the RTM auth flow.
+
+    Returns the frob string.
+    """
+    api_key = _get_env("RTM_API_KEY")
+    shared_secret = _get_env("RTM_SHARED_SECRET")
+
+    if not api_key or not shared_secret:
+        raise RuntimeError("RTM is not configured")
+
+    base_params: Dict[str, str] = {
+        "method": "rtm.auth.getFrob",
+        "api_key": api_key,
+    }
+
+    api_sig = _sign_params(shared_secret, base_params)
+
+    request_params = {
+        **base_params,
+        "api_sig": api_sig,
+    }
+
+    response = requests.get(
+        RTM_API_BASE_URL,
+        params=request_params,
+        timeout=20,
+    )
+    response.raise_for_status()
+
+    import xml.etree.ElementTree as ET
+    root = ET.fromstring(response.text)
+    frob = root.findtext("frob")
+
+    if not frob:
+        raise RuntimeError(f"Failed to get frob: {response.text}")
+
+    return frob
+
+
+def auth_get_token(frob: str) -> Dict[str, Any]:
+    """
+    Exchange a frob for an auth token.
+
+    Returns dict with token, perms, and user info.
+    """
+    api_key = _get_env("RTM_API_KEY")
+    shared_secret = _get_env("RTM_SHARED_SECRET")
+
+    if not api_key or not shared_secret:
+        raise RuntimeError("RTM is not configured")
+
+    base_params: Dict[str, str] = {
+        "method": "rtm.auth.getToken",
+        "api_key": api_key,
+        "frob": frob,
+    }
+
+    api_sig = _sign_params(shared_secret, base_params)
+
+    request_params = {
+        **base_params,
+        "api_sig": api_sig,
+    }
+
+    response = requests.get(
+        RTM_API_BASE_URL,
+        params=request_params,
+        timeout=20,
+    )
+    response.raise_for_status()
+
+    import xml.etree.ElementTree as ET
+    root = ET.fromstring(response.text)
+    rsp = root.find("rsp")
+
+    if rsp is not None and rsp.get("stat") == "ok":
+        auth = rsp.find("auth")
+        if auth is not None:
+            user = auth.find("user")
+            return {
+                "stat": "ok",
+                "token": auth.findtext("token"),
+                "perms": auth.findtext("perms"),
+                "user": {
+                    "id": user.get("id") if user is not None else None,
+                    "username": user.findtext("username") if user is not None else None,
+                }
+            }
+
+    # Extract error if present
+    err = rsp.find("err") if rsp is not None else None
+    if err is not None:
+        return {
+            "stat": "fail",
+            "err": {
+                "code": err.get("code"),
+                "msg": err.get("msg"),
+            }
+        }
+
+    return {"stat": "fail", "err": {"msg": "Unknown error"}}
 
