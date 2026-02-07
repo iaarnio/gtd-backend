@@ -21,6 +21,19 @@
 {% set clar = clar_dict %}
 
 <style>
+.warning-box {
+    background-color: #fff3cd;
+    border: 2px solid #ffc107;
+    padding: 15px;
+    border-radius: 4px;
+    margin: 20px 0;
+    color: #856404;
+}
+
+.warning-box strong {
+    color: #dc3545;
+}
+
 .form-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -135,7 +148,6 @@ details pre {
 </style>
 
 <form method="post" action="/approvals/{{ capture.id }}/clarification">
-    <input type="hidden" name="clarification_json_raw" id="clarification_json_raw">
 
     <div class="form-grid">
         <!-- Left column -->
@@ -193,14 +205,20 @@ details pre {
         </div>
     </div>
 
+    <!-- Non-actionable warning -->
+    {% if clar.get('type') == 'non_actionable' %}
+    <div class="warning-box">
+        <strong>⚠ Non-actionable Item</strong><br>
+        This was interpreted as non-actionable. If you want to make it actionable, edit the task above and the system will reclassify it. Otherwise, reject it.
+    </div>
+    {% endif %}
+
     <!-- Action buttons -->
     {% if capture.decision_status == "proposed" %}
     <div class="button-group">
-        <button type="submit" class="approve" formaction="/approvals/{{ capture.id }}/approve"
-                onclick="this.form.action='/approvals/{{ capture.id }}/approve'">Approve</button>
-        <button type="submit" class="save">Save</button>
-        <button type="submit" class="reject" formaction="/approvals/{{ capture.id }}/reject"
-                onclick="this.form.action='/approvals/{{ capture.id }}/reject'">Reject</button>
+        <button type="submit" class="approve" name="action" value="approve">Approve</button>
+        <button type="submit" class="save" name="action" value="save">Save</button>
+        <button type="submit" class="reject" name="action" value="reject">Reject</button>
     </div>
     {% else %}
     <p><em>This capture has already been {{ capture.decision_status }}.</em></p>
@@ -223,25 +241,25 @@ details pre {
 </form>
 
 <script>
+// Handle form submission - change action based on button clicked
 document.querySelector('form').addEventListener('submit', function(e) {
-    // Build clarification JSON from form fields
-    const clarificationData = {
-        type: document.getElementById('is_next_action').checked ? 'next_action' : 'project',
-        clarified_text: document.getElementById('project').value || document.getElementById('next_action').value,
-        project_name: document.getElementById('project').value || null,
-        project_shortname: document.getElementById('project_shortname').value.toUpperCase() || null,
-        next_action: document.getElementById('next_action').value || null,
-        suggested_context: document.getElementById('context').value || null,
-        due_date: document.getElementById('due_date').value || null,
-        notes: document.getElementById('notes').value || null,
-        ambiguities: "{{ clar.get('ambiguities', '') or '' }}",
-        suggested_tool: "{{ clar.get('suggested_tool', '') or '' }}",
-        confidence_score: {{ clar.get('confidence_score', 0.5) or 0.5 }}
-    };
+    // Uppercase project_shortname
+    const shortname = document.getElementById('project_shortname');
+    if (shortname.value) {
+        shortname.value = shortname.value.toUpperCase();
+    }
 
-    // Set the hidden field with JSON
-    document.getElementById('clarification_json_raw').name = 'data';
-    document.getElementById('clarification_json_raw').value = JSON.stringify(clarificationData);
+    // Get which button was clicked
+    const submitButton = document.activeElement;
+    const action = submitButton.getAttribute('value');
+
+    // If approve or reject, change form action
+    if (action === 'approve') {
+        this.action = '/approvals/{{ capture.id }}/approve';
+    } else if (action === 'reject') {
+        this.action = '/approvals/{{ capture.id }}/reject';
+    }
+    // if action === 'save', keep default action /approvals/{id}/clarification
 });
 </script>
 

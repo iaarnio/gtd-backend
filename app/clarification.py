@@ -59,16 +59,23 @@ Language rules:
 
 Classification rules:
 - Decide whether the capture is:
-  - a single next action
-  - a project (requires more than one step)
+  - a single standalone next action (small, self-contained, no further steps needed)
+  - a project (requires more than one step, has a larger goal)
   - or non-actionable
-- If it is a project, you MUST:
-  - provide a clear project_name
-  - provide the FIRST concrete next_action
+- Key distinction:
+  - "Soita äidille" = standalone next_action (just one step, done)
+  - "Osta maali" IN THE CONTEXT OF "remontoi asunto" = project (part of larger goal)
+- If it is a project OR the capture is clearly part of a larger goal, you MUST:
+  - provide a clear project_name (infer if needed from context)
+  - provide the FIRST concrete next_action for that project
   - provide a project_shortname: a short, uppercase identifier unique to this project (e.g. "KUVA", "GTD", "AUTO")
     - Should be 2-6 uppercase letters
     - Should be memorable and unique among projects
     - Derived from the project's core theme
+- ONLY classify as standalone next_action if:
+  - It's a single, self-contained action
+  - No implicit larger goal or project context
+  - Examples: call someone, write an email, file a document, buy one item
 - A next action must be a physical, visible action.
 - If non-actionable, choose the most appropriate category.
 

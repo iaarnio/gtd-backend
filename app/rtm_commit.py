@@ -91,7 +91,8 @@ def _compute_task_name_and_tags(clar: Dict[str, Any]) -> Tuple[str, str]:
         task_name = f"{shortname} - §§§ - {base}"
         include_na = False
     else:
-        # next_action or non_actionable: we only create tasks for actionable items.
+        # next_action or non_actionable: both create RTM tasks with #na tag.
+        # non_actionable is just metadata that the AI wasn't confident, but user approved it anyway.
         task_name = next_action or clarified_text or "Tehtävä"
         include_na = True
 
@@ -132,21 +133,7 @@ def _should_attempt_commit(capture: Capture) -> bool:
 def _commit_one_capture(db, capture: Capture) -> None:
     clar = _parse_json_maybe(capture.clarify_json) or {}
 
-    # Only commit actionable items. Non-actionable captures remain approved but uncommitted.
     ctype = (clar.get("type") or "").strip()
-    if ctype == "non_actionable":
-        logger.info(f"Skipping capture {capture.id}: non_actionable")
-        _set_commit_state(
-            db,
-            capture,
-            {
-                "provider": "rtm",
-                "status": "skipped",
-                "reason": "non_actionable",
-                "updated_at": _now_iso(),
-            },
-        )
-        return
 
     # For projects, project_shortname is required from clarification.
     if ctype == "project":

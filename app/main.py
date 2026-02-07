@@ -18,6 +18,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Personal GTD Backend", version="0.1.0")
 templates = Jinja2Templates(directory="app/templates")
@@ -210,23 +211,46 @@ async def approval_update_clarification(
     db: Session = Depends(get_db),
 ) -> RedirectResponse:
     """
-    Update clarification JSON from the approval HTML form.
+    Update clarification from the approval HTML form fields.
     """
     form = await request.form()
-    clarification_json = form.get("clarification_json")
-    if clarification_json is None:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing clarification_json")
-
-    try:
-        data = json.loads(clarification_json)
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid JSON")
 
     capture = db.get(models.Capture, capture_id)
     if capture is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Capture not found")
 
-    capture.clarify_json = json.dumps(data, ensure_ascii=False)
+    # Get current clarification to preserve fields not in form
+    clar = _parse_clarify_json(capture.clarify_json) or {}
+
+    # Update with form fields
+    project_name = form.get("project_name") or ""
+    next_action = form.get("next_action") or ""
+    is_next_action = form.get("is_next_action") == "on"
+
+    # Determine type: checkbox is the primary indicator
+    if project_name:
+        clar_type = "project"
+    elif is_next_action:
+        clar_type = "next_action"
+    else:
+        # Keep original type if neither project nor NA checkbox
+        clar_type = clar.get("type", "project")
+
+    clar.update({
+        "type": clar_type,
+        "clarified_text": project_name or next_action or clar.get("clarified_text"),
+        "project_name": project_name or None,
+        "project_shortname": (form.get("project_shortname") or "").upper() or None,
+        "next_action": next_action or None,
+        "suggested_context": form.get("suggested_context") or None,
+        "due_date": form.get("due_date") or None,
+        "notes": form.get("notes") or None,
+    })
+
+    capture.clarify_json = json.dumps(clar, ensure_ascii=False)
+    # Clear commit state when clarification is updated so it will be reprocessed
+    if capture.decision_status == "approved":
+        capture.external_commit_state = None
     db.add(capture)
     db.commit()
 
@@ -242,12 +266,14 @@ def _ensure_proposed(capture: models.Capture) -> None:
 
 
 @app.post("/approvals/{capture_id}/approve")
-def approve_capture(
+async def approve_capture(
     capture_id: int,
+    request: Request,
     db: Session = Depends(get_db),
 ):
     """
     Mark a capture as approved. This transition is irreversible.
+    Accepts form fields to save clarification before approving.
     """
     from datetime import datetime
 
@@ -256,6 +282,42 @@ def approve_capture(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Capture not found")
 
     _ensure_proposed(capture)
+
+    # Try to save clarification from form fields
+    try:
+        form = await request.form()
+        # Get current clarification to preserve fields not in form
+        clar = _parse_clarify_json(capture.clarify_json) or {}
+
+        # Update with form fields
+        project_name = form.get("project_name") or ""
+        next_action = form.get("next_action") or ""
+        is_next_action = form.get("is_next_action") == "on"
+
+        # Determine type: user can override via project_name or NA checkbox
+        if project_name:
+            clar_type = "project"
+        elif is_next_action:
+            clar_type = "next_action"
+        else:
+            # Keep original type if no explicit override
+            clar_type = clar.get("type", "next_action")
+
+        clar.update({
+            "type": clar_type,
+            "clarified_text": project_name or next_action or clar.get("clarified_text"),
+            "project_name": project_name or None,
+            "project_shortname": (form.get("project_shortname") or "").upper() or None,
+            "next_action": next_action or None,
+            "suggested_context": form.get("suggested_context") or None,
+            "due_date": form.get("due_date") or None,
+            "notes": form.get("notes") or None,
+        })
+
+        capture.clarify_json = json.dumps(clar, ensure_ascii=False)
+    except Exception as e:
+        # If form parsing fails, continue without saving
+        logger.debug(f"Failed to save clarification in approve: {e}")
 
     capture.decision_status = "approved"
     capture.decision_at = datetime.utcnow()
@@ -266,12 +328,14 @@ def approve_capture(
 
 
 @app.post("/approvals/{capture_id}/reject")
-def reject_capture(
+async def reject_capture(
     capture_id: int,
+    request: Request,
     db: Session = Depends(get_db),
 ):
     """
     Mark a capture as rejected. This transition is irreversible.
+    Accepts form fields to save clarification before rejecting.
     """
     from datetime import datetime
 
@@ -280,6 +344,42 @@ def reject_capture(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Capture not found")
 
     _ensure_proposed(capture)
+
+    # Try to save clarification from form fields
+    try:
+        form = await request.form()
+        # Get current clarification to preserve fields not in form
+        clar = _parse_clarify_json(capture.clarify_json) or {}
+
+        # Update with form fields
+        project_name = form.get("project_name") or ""
+        next_action = form.get("next_action") or ""
+        is_next_action = form.get("is_next_action") == "on"
+
+        # Determine type: user can override via project_name or NA checkbox
+        if project_name:
+            clar_type = "project"
+        elif is_next_action:
+            clar_type = "next_action"
+        else:
+            # Keep original type if no explicit override
+            clar_type = clar.get("type", "next_action")
+
+        clar.update({
+            "type": clar_type,
+            "clarified_text": project_name or next_action or clar.get("clarified_text"),
+            "project_name": project_name or None,
+            "project_shortname": (form.get("project_shortname") or "").upper() or None,
+            "next_action": next_action or None,
+            "suggested_context": form.get("suggested_context") or None,
+            "due_date": form.get("due_date") or None,
+            "notes": form.get("notes") or None,
+        })
+
+        capture.clarify_json = json.dumps(clar, ensure_ascii=False)
+    except Exception as e:
+        # If form parsing fails, continue without saving
+        logger.debug(f"Failed to save clarification in reject: {e}")
 
     capture.decision_status = "rejected"
     capture.decision_at = datetime.utcnow()
