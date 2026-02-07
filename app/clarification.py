@@ -1,13 +1,17 @@
 import json
+import logging
 import os
 import threading
 import time
 from typing import Any, Dict, Optional
 
+import requests
 from openai import OpenAI
 
 from .db import SessionLocal
 from .models import Capture
+
+logger = logging.getLogger(__name__)
 
 
 """
@@ -123,9 +127,11 @@ def _get_client() -> Optional[OpenAI]:
         return None
 
     # Get optional base URL override (for custom endpoints or proxies).
-    base_url = os.environ.get("OPENAI_BASE_URL")
+    # Only use if explicitly set to a non-empty value.
+    base_url = os.environ.get("OPENAI_BASE_URL", "").strip()
 
     if base_url:
+        logger.info(f"Using custom OpenAI base URL: {base_url}")
         return OpenAI(api_key=api_key, base_url=base_url)
     else:
         return OpenAI(api_key=api_key)
@@ -135,46 +141,78 @@ def _build_user_prompt(raw_text: str) -> str:
     return f"Raaka GTD-tiivistys alla. Analysoi ja palauta vain JSON yllä kuvatun skeeman mukaisesti.\n\n---\n\n{raw_text}"
 
 
-def _clarify_capture(client: OpenAI, capture: Capture) -> Optional[str]:
+def _clarify_capture(api_key: str, base_url: str, capture: Capture) -> Optional[str]:
     """
     Call the LLM once for this capture and return the JSON string, or
-    None on failure.
+    None on failure. Uses requests library directly for better OpenRouter compatibility.
     """
     model = os.environ.get("OPENAI_MODEL", "gpt-4.1-mini")
+
     try:
-        response = client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": _build_user_prompt(capture.raw_text)},
-            ],
-            temperature=0.2,
+        response = requests.post(
+            f"{base_url}/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": _build_user_prompt(capture.raw_text)},
+                ],
+                "temperature": 0.2,
+            },
+            timeout=30,
         )
-    except Exception:
+        response.raise_for_status()
+    except requests.exceptions.RequestException as e:
+        logger.error(f"LLM API error for capture {capture.id}: {e}", exc_info=True)
         return None
 
-    content = response.choices[0].message.content
-    if not content:
-        return None
-
-    # Validate that the response is valid JSON and roughly matches the
-    # expected structure. We store the original string to preserve the
-    # model's output verbatim.
     try:
-        data: Dict[str, Any] = json.loads(content)
-    except json.JSONDecodeError:
+        data = response.json()
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to parse JSON response for capture {capture.id}: {e}")
         return None
 
-    if "confidence_score" not in data:
+    if "error" in data:
+        logger.error(f"LLM API returned error for capture {capture.id}: {data['error']}")
+        return None
+
+    try:
+        content = data["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError) as e:
+        logger.error(f"Unexpected response structure for capture {capture.id}: {e}")
+        return None
+
+    if not content:
+        logger.warning(f"Empty response from LLM for capture {capture.id}")
+        return None
+
+    # Validate that the response is valid JSON and roughly matches the expected structure.
+    try:
+        result_data: Dict[str, Any] = json.loads(content)
+    except json.JSONDecodeError as e:
+        logger.error(f"Invalid JSON in LLM response for capture {capture.id}: {e}")
+        return None
+
+    if "confidence_score" not in result_data:
+        logger.warning(f"Missing confidence_score in response for capture {capture.id}")
         return None
 
     return content
 
 
 def _poll_once() -> None:
-    client = _get_client()
-    if client is None:
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if not api_key:
         # Without an API key, clarification is simply disabled.
+        return
+
+    base_url = os.environ.get("OPENAI_BASE_URL", "").strip()
+    if not base_url:
+        logger.warning("OPENAI_BASE_URL not configured, clarification disabled")
         return
 
     db = SessionLocal()
@@ -189,12 +227,19 @@ def _poll_once() -> None:
         )
 
         for capture in pending:
-            result = _clarify_capture(client, capture)
+            result = _clarify_capture(api_key, base_url, capture)
             if result is None:
-                # Failure is acceptable; capture remains without
-                # clarification and can be retried later.
-                continue
-            capture.clarify_json = result
+                # Clarification failed - save error info for user visibility
+                error_info = {
+                    "type": "error",
+                    "status": "clarification_failed",
+                    "message": "Failed to clarify email. Check logs for details. This can be retried later.",
+                    "requires_user_attention": True,
+                }
+                capture.clarify_json = json.dumps(error_info, ensure_ascii=False)
+                logger.warning(f"Saved clarification error info for capture {capture.id}")
+            else:
+                capture.clarify_json = result
             db.add(capture)
             db.commit()
     finally:
@@ -206,13 +251,14 @@ def run_clarification_loop() -> None:
     Background loop that periodically attempts to clarify unprocessed
     captures.
     """
+    logger.info("Clarification loop started, polling every 30 seconds")
     while True:
         try:
             _poll_once()
-        except Exception:
+        except Exception as e:
             # Failures should not crash the loop; they will be surfaced
             # by logs in a later hardening step.
-            pass
+            logger.error(f"Error in clarification loop: {e}", exc_info=True)
         time.sleep(POLL_INTERVAL_SECONDS)
 
 
@@ -221,6 +267,8 @@ def start_background_clarifier() -> None:
     Start the clarification loop in a daemon thread. Intended to be
     called from FastAPI startup.
     """
+    logger.info("Starting background clarification loop")
     thread = threading.Thread(target=run_clarification_loop, name="clarification-loop", daemon=True)
     thread.start()
+    logger.info("Clarification loop thread started")
 

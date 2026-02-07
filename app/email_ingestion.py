@@ -164,18 +164,23 @@ def _poll_once() -> None:
 
         db_session = SessionLocal()
         try:
-            processed = 0
+            # Fetch all email data first to avoid UID invalidation
+            emails_to_process = []
             for uid in uids:
                 typ, msg_data = client.fetch(uid, "(RFC822)")
                 if typ != "OK" or not msg_data or msg_data[0] is None:
                     logger.warning(f"Failed to fetch email UID {uid.decode()}")
                     continue
                 raw_email = msg_data[0][1]
+                emails_to_process.append((uid, raw_email))
 
-                # Process the message and store in DB
+            # Process all emails and store in DB
+            for uid, raw_email in emails_to_process:
                 _process_message(db_session, uid, raw_email)
 
-                # Move from gtdinput to gtdprocessed (mutually exclusive labels)
+            # Move all emails from gtdinput to gtdprocessed
+            processed = 0
+            for uid, raw_email in emails_to_process:
                 try:
                     # Add gtdprocessed label
                     typ, copy_data = client.copy(uid, "gtdprocessed")
@@ -194,7 +199,7 @@ def _poll_once() -> None:
                 except Exception as e:
                     logger.warning(f"Error moving email {uid.decode()}: {e}")
 
-            # Expunge to finalize deletion (remove from gtdinput)
+            # Expunge once after all emails are processed
             if processed > 0:
                 client.expunge()
 
