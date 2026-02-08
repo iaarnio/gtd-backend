@@ -335,7 +335,9 @@ def _ensure_anchor_for_pending_approvals(db) -> None:
 
     # Attempt to create the RTM anchor task.
     # Anchor is not a project, so it uses a simple task name without project format.
-    smart_add = "Tarkista GTD-hyväksynnät #na"
+    # Include today's date so it appears as priority in daily list
+    today_iso = today.isoformat()
+    smart_add = f"Tarkista GTD-hyväksynnät ^{today_iso}"
 
     state: Dict[str, Any] = {
         "provider": "rtm",
