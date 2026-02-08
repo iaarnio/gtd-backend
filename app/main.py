@@ -125,22 +125,22 @@ def health_check(request: Request, db: Session = Depends(get_db)) -> HTMLRespons
         try:
             from .rtm_auth import is_rtm_auth_valid
             if is_rtm_auth_valid():
-                health_status["components"]["rtm"] = {
+                health_status["components"]["RTM"] = {
                     "status": "ok",
                     "message": "RTM is configured and authenticated"
                 }
             else:
-                health_status["components"]["rtm"] = {
+                health_status["components"]["RTM"] = {
                     "status": "degraded",
                     "message": "RTM is configured but not authenticated (requires user action)"
                 }
         except Exception as e:
-            health_status["components"]["rtm"] = {
+            health_status["components"]["RTM"] = {
                 "status": "error",
                 "message": f"RTM auth check failed: {str(e)}"
             }
     else:
-        health_status["components"]["rtm"] = {
+        health_status["components"]["RTM"] = {
             "status": "not_configured",
             "message": "RTM is not configured (optional)"
         }
@@ -163,12 +163,12 @@ def health_check(request: Request, db: Session = Depends(get_db)) -> HTMLRespons
     llm_key = os.environ.get("OPENAI_API_KEY")
     llm_base_url = os.environ.get("OPENAI_BASE_URL")
     if llm_key and llm_base_url:
-        health_status["components"]["llm"] = {
+        health_status["components"]["LLM"] = {
             "status": "ok",
             "message": "LLM clarification is configured (actual connection tested on poll)"
         }
     else:
-        health_status["components"]["llm"] = {
+        health_status["components"]["LLM"] = {
             "status": "not_configured",
             "message": "LLM clarification is not configured (optional)"
         }
