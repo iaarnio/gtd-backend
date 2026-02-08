@@ -74,11 +74,12 @@ Classification rules:
   - "Osta maali" IN THE CONTEXT OF "remontoi asunto" = project (part of larger goal)
 - If it is a project OR the capture is clearly part of a larger goal, you MUST:
   - provide a clear project_name (infer if needed from context)
-  - provide the FIRST concrete next_action for that project
   - provide a project_shortname: a short, uppercase identifier unique to this project (e.g. "KUVA", "GTD", "AUTO")
     - Should be 2-6 uppercase letters
     - Should be memorable and unique among projects
     - Derived from the project's core theme
+  - provide the FIRST concrete next_action for that project
+  - his next_action has naming format: PROJECT_SHORTNAME --- Task description (e.g. "KUVA --- Siirrä kuvat Macbookille")
 - ONLY classify as standalone action if:
   - It's a single, self-contained action
   - No implicit larger goal or project context
