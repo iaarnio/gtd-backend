@@ -7,6 +7,7 @@ from typing import Any, Dict, Optional
 from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from . import clarification, email_ingestion, models, rtm_commit  # noqa: F401  - ensure models are imported
@@ -247,13 +248,13 @@ def audit_log(
     # Build query with filters
     query = db.query(models.Capture)
 
-    # Text search across multiple fields
+    # Text search across multiple fields (case-insensitive)
     if q and q.strip():
-        search_term = f"%{q.strip()}%"
+        search_term = f"%{q.strip().lower()}%"
         query = query.filter(
-            (models.Capture.raw_text.ilike(search_term)) |
-            (models.Capture.clarify_json.ilike(search_term)) |
-            (models.Capture.email_id.ilike(search_term))
+            (func.lower(models.Capture.raw_text).like(search_term)) |
+            (func.lower(models.Capture.clarify_json).like(search_term)) |
+            (func.lower(models.Capture.email_id).like(search_term))
         )
 
     # Filter by source
@@ -656,6 +657,42 @@ async def reject_capture(
         pass  # Context manager handles commit
 
     return RedirectResponse(url="/approvals", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@app.post("/captures/{capture_id}/restore")
+def restore_capture(
+    capture_id: int,
+    db: Session = Depends(get_db),
+) -> dict:
+    """
+    Restore a rejected capture back to proposed state for re-approval.
+    """
+    capture = db.get(models.Capture, capture_id)
+    if capture is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Capture not found")
+
+    if capture.decision_status != "rejected":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Cannot restore capture with decision_status={capture.decision_status}. Only rejected captures can be restored.",
+        )
+
+    capture.decision_status = "proposed"
+    capture.decision_at = None
+    db.add(capture)
+    with transactional_session(db):
+        pass  # Context manager handles commit
+
+    logger.info(
+        f"Restored capture {capture_id} from rejected to proposed",
+        extra={
+            "component": "ui",
+            "operation": "restore_capture",
+            "capture_id": capture_id,
+        },
+    )
+
+    return {"status": "success", "message": f"Capture #{capture_id} restored to Approvals"}
 
 
 @app.put(

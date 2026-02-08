@@ -77,6 +77,7 @@
             <th>Clarified</th>
             <th>Decision</th>
             <th>RTM Status</th>
+            <th>Actions</th>
         </tr>
     </thead>
     <tbody>
@@ -113,10 +114,38 @@
                     <div class="small">RTM: {{ capture.rtm_task_id }}</div>
                 {% endif %}
             </td>
+            <td>
+                {% if capture.decision_status == 'rejected' %}
+                    <button type="button" class="restore-btn" data-id="{{ capture.id }}" style="padding: 0.3rem 0.6rem; background: #28a745; color: white; border: none; border-radius: 3px; cursor: pointer; font-size: 0.85rem;">Restore</button>
+                {% endif %}
+            </td>
         </tr>
     {% endfor %}
     </tbody>
 </table>
+
+<script>
+document.querySelectorAll('.restore-btn').forEach(btn => {
+    btn.addEventListener('click', async function(e) {
+        const captureId = this.getAttribute('data-id');
+        if (!confirm(`Restore capture #${captureId} to Approvals?`)) {
+            return;
+        }
+        try {
+            const response = await fetch(`/captures/${captureId}/restore`, { method: 'POST' });
+            if (response.ok) {
+                alert('Capture restored to Approvals!');
+                location.reload();
+            } else {
+                const error = await response.json();
+                alert(`Error: ${error.detail || 'Failed to restore capture'}`);
+            }
+        } catch (error) {
+            alert(`Error: ${error.message}`);
+        }
+    });
+});
+</script>
 
 {% if not captures %}
     <p><em>No captures yet.</em></p>
