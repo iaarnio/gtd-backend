@@ -6,6 +6,52 @@
 <h2>Audit Log</h2>
 <p>Complete trail of all captures from ingestion through approval to RTM sync.</p>
 
+<div style="background: #f9f9f9; padding: 1rem; border-radius: 5px; margin-bottom: 1.5rem;">
+    <form method="get" style="display: flex; gap: 1rem; flex-wrap: wrap; align-items: flex-end;">
+        <div style="flex: 1; min-width: 200px;">
+            <label for="q" style="display: block; font-weight: bold; font-size: 0.9rem; margin-bottom: 0.3rem;">Search</label>
+            <input type="text" id="q" name="q" value="{{ search_query }}" placeholder="Search text, email ID..." style="width: 100%; padding: 0.5rem; border: 1px solid #ccc; border-radius: 3px;">
+        </div>
+
+        <div style="flex: 0.8;">
+            <label for="source" style="display: block; font-weight: bold; font-size: 0.9rem; margin-bottom: 0.3rem;">Source</label>
+            <select id="source" name="source" style="width: 100%; padding: 0.5rem; border: 1px solid #ccc; border-radius: 3px;">
+                <option value="">All</option>
+                {% for s in sources %}
+                    <option value="{{ s }}" {% if selected_source == s %}selected{% endif %}>{{ s }}</option>
+                {% endfor %}
+            </select>
+        </div>
+
+        <div style="flex: 0.8;">
+            <label for="decision_status" style="display: block; font-weight: bold; font-size: 0.9rem; margin-bottom: 0.3rem;">Decision</label>
+            <select id="decision_status" name="decision_status" style="width: 100%; padding: 0.5rem; border: 1px solid #ccc; border-radius: 3px;">
+                <option value="">All</option>
+                {% for d in decision_statuses %}
+                    <option value="{{ d }}" {% if selected_decision_status == d %}selected{% endif %}>{{ d }}</option>
+                {% endfor %}
+            </select>
+        </div>
+
+        <div style="flex: 0.8;">
+            <label for="commit_status" style="display: block; font-weight: bold; font-size: 0.9rem; margin-bottom: 0.3rem;">RTM Status</label>
+            <select id="commit_status" name="commit_status" style="width: 100%; padding: 0.5rem; border: 1px solid #ccc; border-radius: 3px;">
+                <option value="">All</option>
+                {% for c in commit_statuses %}
+                    <option value="{{ c }}" {% if selected_commit_status == c %}selected{% endif %}>{{ c }}</option>
+                {% endfor %}
+            </select>
+        </div>
+
+        <button type="submit" style="padding: 0.5rem 1rem; background: #0066cc; color: white; border: none; border-radius: 3px; cursor: pointer; font-weight: bold;">Filter</button>
+        <a href="/audit-log" style="padding: 0.5rem 1rem; background: #999; color: white; border-radius: 3px; text-decoration: none; font-weight: bold;">Clear</a>
+    </form>
+</div>
+
+{% if search_query or selected_source or selected_decision_status or selected_commit_status %}
+    <p style="color: #666; margin-bottom: 1rem;"><strong>Showing {{ total_captures }} result(s)</strong></p>
+{% endif %}
+
 <style>
     .small { font-size: 0.85rem; color: #666; }
     .badge { display: inline-block; padding: 0.2rem 0.4rem; border-radius: 3px; font-size: 0.75rem; text-transform: uppercase; margin-right: 0.5rem; }

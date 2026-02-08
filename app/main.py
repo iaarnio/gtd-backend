@@ -227,20 +227,49 @@ def metrics(db: Session = Depends(get_db)) -> dict:
 
 
 @app.get("/audit-log", response_class=HTMLResponse)
-def audit_log(request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
+def audit_log(
+    request: Request,
+    db: Session = Depends(get_db),
+    q: Optional[str] = None,
+    source: Optional[str] = None,
+    decision_status: Optional[str] = None,
+    commit_status: Optional[str] = None,
+) -> HTMLResponse:
     """
-    View complete audit trail of all captures with their full state:
-    - Ingestion details (source, email_id, timestamps)
-    - Clarification results
-    - User decisions
-    - RTM sync status
+    View complete audit trail of all captures with search/filter support.
+
+    Query parameters:
+    - q: text search (searches raw_text, clarified_text, email_id)
+    - source: filter by source (email, test, etc.)
+    - decision_status: filter by decision (proposed, approved, rejected)
+    - commit_status: filter by RTM commit status (pending, committed, failed, unknown, auth_failed, permanently_failed)
     """
-    # Get all captures ordered by creation time (newest first)
-    captures = (
-        db.query(models.Capture)
-        .order_by(models.Capture.created_at.desc())
-        .all()
-    )
+    # Build query with filters
+    query = db.query(models.Capture)
+
+    # Text search across multiple fields
+    if q and q.strip():
+        search_term = f"%{q.strip()}%"
+        query = query.filter(
+            (models.Capture.raw_text.ilike(search_term)) |
+            (models.Capture.clarify_json.ilike(search_term)) |
+            (models.Capture.email_id.ilike(search_term))
+        )
+
+    # Filter by source
+    if source and source.strip():
+        query = query.filter(models.Capture.source == source.strip())
+
+    # Filter by decision status
+    if decision_status and decision_status.strip():
+        query = query.filter(models.Capture.decision_status == decision_status.strip())
+
+    # Filter by commit status
+    if commit_status and commit_status.strip():
+        query = query.filter(models.Capture.commit_status == commit_status.strip())
+
+    # Order by creation time (newest first)
+    captures = query.order_by(models.Capture.created_at.desc()).all()
 
     # Enrich captures with parsed clarification data
     enriched = []
@@ -263,9 +292,25 @@ def audit_log(request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
             "rtm_task_id": c.rtm_task_id,
         })
 
+    # Get distinct values for filter dropdowns
+    all_sources = db.query(models.Capture.source).distinct().order_by(models.Capture.source).all()
+    all_decision_statuses = db.query(models.Capture.decision_status).distinct().order_by(models.Capture.decision_status).all()
+    all_commit_statuses = db.query(models.Capture.commit_status).distinct().order_by(models.Capture.commit_status).all()
+
     return templates.TemplateResponse(
         "audit_log.html",
-        {"request": request, "captures": enriched},
+        {
+            "request": request,
+            "captures": enriched,
+            "search_query": q or "",
+            "selected_source": source or "",
+            "selected_decision_status": decision_status or "",
+            "selected_commit_status": commit_status or "",
+            "sources": [s[0] for s in all_sources if s[0]],
+            "decision_statuses": [s[0] for s in all_decision_statuses if s[0]],
+            "commit_statuses": [s[0] for s in all_commit_statuses if s[0]],
+            "total_captures": len(enriched),
+        },
     )
 
 
