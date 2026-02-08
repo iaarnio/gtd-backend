@@ -7,7 +7,9 @@ from email import message_from_bytes
 from email.header import decode_header, make_header
 from typing import Optional
 
+from .config import config
 from .db import SessionLocal
+from .db_utils import transactional_session
 from .models import Capture
 
 logger = logging.getLogger(__name__)
@@ -25,7 +27,8 @@ No AI, clarification, or RTM integration is performed here.
 """
 
 
-POLL_INTERVAL_SECONDS = 60  # 1 hour for production
+# Import polling interval from config
+POLL_INTERVAL_SECONDS = config.EMAIL_POLL_INTERVAL
 
 
 def _get_env(name: str, default: Optional[str] = None) -> Optional[str]:
@@ -59,14 +62,40 @@ def _open_imap_connection() -> Optional[imaplib.IMAP4_SSL]:
     except ValueError:
         port = 993
 
+    # Get IMAP timeout from config
+    timeout = config.IMAP_TIMEOUT
+
     try:
-        logger.info(f"Connecting to IMAP {host}:{port} as {user}")
-        client = imaplib.IMAP4_SSL(host, port)
+        logger.info(
+            f"Connecting to IMAP {host}:{port} as {user}",
+            extra={
+                "component": "email",
+                "external_service": "gmail_imap",
+                "operation": "connect",
+            },
+        )
+        client = imaplib.IMAP4_SSL(host, port, timeout=timeout)
         client.login(user, password)
-        logger.info("IMAP connection established")
+        logger.info(
+            "IMAP connection established",
+            extra={
+                "component": "email",
+                "external_service": "gmail_imap",
+                "operation": "connect",
+            },
+        )
         return client
     except Exception as e:
-        logger.error(f"Failed to connect to IMAP: {e}")
+        logger.error(
+            f"Failed to connect to IMAP: {e}",
+            extra={
+                "component": "email",
+                "external_service": "gmail_imap",
+                "operation": "connect",
+                "error_type": type(e).__name__,
+            },
+            exc_info=True,
+        )
         return None
 
 
@@ -114,7 +143,9 @@ def _process_message(db_session, uid: bytes, raw_email: bytes) -> None:
     """
     Process an email message and create a capture.
 
-    No idempotency check needed - gtdinput/gtdprocessed labels are mutually exclusive.
+    Includes deduplication check to prevent duplicates from email processing failures.
+    Even though gtdinput/gtdprocessed labels are normally mutually exclusive,
+    this check protects against edge cases where label move fails.
     """
     msg = message_from_bytes(raw_email)
     message_id = _get_message_id(msg)
@@ -122,6 +153,27 @@ def _process_message(db_session, uid: bytes, raw_email: bytes) -> None:
         source_id = uid.decode()
     else:
         source_id = message_id
+
+    # Deduplication: check if we already have a capture from this email
+    existing = (
+        db_session.query(Capture)
+        .filter(
+            Capture.source == "email",
+            Capture.source_id == source_id
+        )
+        .first()
+    )
+
+    if existing:
+        logger.info(
+            f"Email already processed, skipping (source_id={source_id})",
+            extra={
+                "component": "email",
+                "operation": "process_message",
+                "error_type": "duplicate",
+            },
+        )
+        return
 
     body = _get_message_body(msg)
     source_link = _build_gmail_link(message_id) if message_id else None
@@ -135,7 +187,16 @@ def _process_message(db_session, uid: bytes, raw_email: bytes) -> None:
         email_link=source_link,
     )
     db_session.add(capture)
-    db_session.commit()
+    with transactional_session(db_session):
+        pass  # Context manager handles commit
+
+    logger.info(
+        f"Created capture from email (source_id={source_id})",
+        extra={
+            "component": "email",
+            "operation": "process_message",
+        },
+    )
 
 
 def _poll_once() -> None:

@@ -6,7 +6,9 @@ import time
 from datetime import date, datetime
 from typing import Any, Dict, Optional, Tuple
 
+from .config import config
 from .db import SessionLocal
+from .db_utils import transactional_session
 from .models import Anchor, Capture
 from .rtm import add_task, create_timeline, is_configured
 
@@ -31,11 +33,52 @@ explicit human decision to clear later (hardening step).
 """
 
 
-POLL_INTERVAL_SECONDS = 30
+# Import polling interval and retry limits from config
+POLL_INTERVAL_SECONDS = config.COMMIT_POLL_INTERVAL
+MAX_COMMIT_ATTEMPTS = config.MAX_COMMIT_RETRIES
 
 
 def _now_iso() -> str:
     return datetime.utcnow().isoformat() + "Z"
+
+
+def _classify_commit_error(exc: Exception) -> Tuple[str, str]:
+    """
+    Classify an exception into RTM commit status and error message.
+
+    Returns (status, error_message) tuple where status is one of:
+    - 'failed': Retryable error (network timeout, server error, RTM temporary failure)
+    - 'auth_failed': Authentication error (invalid token, requires user re-auth)
+    - 'unknown': Timeout/unknown state (cannot determine if task was created, requires manual review)
+
+    Args:
+        exc: The exception that occurred during commit
+
+    Returns:
+        (status: str, error_msg: str) tuple
+    """
+    error_type = type(exc).__name__
+    error_msg = str(exc)
+
+    # Timeout = unknown state (we don't know if task was created)
+    # This should NOT be retried automatically to prevent duplicates
+    if "Timeout" in error_type or "timeout" in error_msg.lower():
+        return "unknown", f"Timeout during RTM commit: {error_msg}. Manual review required."
+
+    # Authentication errors = requires user re-auth
+    if "auth" in error_msg.lower() or "401" in error_msg or "403" in error_msg:
+        return "auth_failed", f"RTM authentication failed: {error_msg}. User must re-authenticate."
+
+    # Circuit breaker = temporary failure (service hammering prevention)
+    if "circuit" in error_msg.lower():
+        return "failed", f"RTM service temporarily unavailable (circuit breaker open): {error_msg}"
+
+    # Network/server errors = retryable
+    if any(term in error_msg.lower() for term in ["connection", "network", "server", "500", "503"]):
+        return "failed", f"RTM temporary failure (retryable): {error_msg}"
+
+    # Default: treat as retryable failure
+    return "failed", f"RTM commit failed: {error_msg}"
 
 
 def _parse_json_maybe(raw: Optional[str]) -> Optional[Dict[str, Any]]:
@@ -110,6 +153,12 @@ def _compute_task_name_and_tags(clar: Dict[str, Any]) -> Tuple[str, str]:
 
 
 def _commit_one_capture(db, capture: Capture) -> None:
+    """
+    Attempt to commit a single capture to RTM.
+
+    Handles error classification, retry logic, and detailed error logging.
+    Commit attempt count is incremented before attempting.
+    """
     clar = _parse_json_maybe(capture.clarify_json) or {}
     ctype = (clar.get("type") or "").strip()
 
@@ -117,15 +166,38 @@ def _commit_one_capture(db, capture: Capture) -> None:
     if ctype == "project":
         project_shortname = (clar.get("project_shortname") or "").strip().upper()
         if not project_shortname:
-            logger.warning(f"Capture {capture.id}: missing project_shortname, marking as failed")
+            # This is a permanent error - missing required field
+            logger.error(
+                f"Capture {capture.id}: missing project_shortname, cannot commit",
+                extra={
+                    "component": "rtm_commit",
+                    "operation": "commit",
+                    "capture_id": capture.id,
+                    "error_type": "missing_field",
+                },
+            )
             capture.commit_status = "failed"
             capture.last_commit_attempt_at = datetime.utcnow()
+            capture.commit_error_message = "Missing project_shortname in clarification"
             db.add(capture)
-            db.commit()
+            with transactional_session(db):
+                pass  # Context manager handles commit
             return
 
     smart_add, task_name = _compute_task_name_and_tags(clar)
-    logger.debug(f"Capture {capture.id}: task_name={task_name}, smart_add={smart_add}")
+    logger.debug(
+        f"Capture {capture.id}: task_name={task_name}, smart_add={smart_add}",
+        extra={
+            "component": "rtm_commit",
+            "operation": "commit",
+            "capture_id": capture.id,
+        },
+    )
+
+    # Increment attempt count before trying
+    capture.commit_attempt_count += 1
+    now = datetime.utcnow()
+    capture.last_commit_attempt_at = now
 
     # External side effect (RTM)
     try:
@@ -133,29 +205,79 @@ def _commit_one_capture(db, capture: Capture) -> None:
         from .rtm_auth import get_rtm_auth
         auth_record = get_rtm_auth()
         if not auth_record or not auth_record.auth_token:
-            raise RuntimeError("No RTM auth token available")
+            raise RuntimeError("No RTM auth token available (user must authenticate)")
 
-        logger.debug(f"Creating timeline and adding task to RTM for capture {capture.id}")
+        logger.debug(
+            f"Creating timeline and adding task to RTM for capture {capture.id} (attempt {capture.commit_attempt_count})",
+            extra={
+                "component": "rtm_commit",
+                "operation": "commit",
+                "capture_id": capture.id,
+                "attempt": capture.commit_attempt_count,
+            },
+        )
         timeline = create_timeline(auth_token=auth_record.auth_token)
         ids = add_task(timeline=timeline, name=smart_add, auth_token=auth_record.auth_token)
 
         # Success: update commit_status
         capture.commit_status = "committed"
-        capture.last_commit_attempt_at = datetime.utcnow()
+        capture.commit_error_message = None
         capture.rtm_task_id = ids.get("task_id")
         capture.rtm_taskseries_id = ids.get("taskseries_id")
         capture.rtm_list_id = ids.get("list_id")
-        logger.info(f"Successfully committed capture {capture.id} to RTM: {ids}")
+        logger.info(
+            f"Successfully committed capture {capture.id} to RTM (attempt {capture.commit_attempt_count})",
+            extra={
+                "component": "rtm_commit",
+                "operation": "commit",
+                "capture_id": capture.id,
+                "attempt": capture.commit_attempt_count,
+            },
+        )
     except Exception as exc:
-        logger.error(f"Failed to commit capture {capture.id} to RTM: {exc}", exc_info=True)
-        capture.commit_status = "failed"
-        capture.last_commit_attempt_at = datetime.utcnow()
+        # Classify the error
+        error_status, error_msg = _classify_commit_error(exc)
+
+        # Check if we've exceeded max attempts
+        if capture.commit_attempt_count >= MAX_COMMIT_ATTEMPTS:
+            capture.commit_status = "permanently_failed" if error_status != "unknown" else "unknown"
+            logger.error(
+                f"Commit permanently failed for capture {capture.id} after {MAX_COMMIT_ATTEMPTS} attempts",
+                extra={
+                    "component": "rtm_commit",
+                    "operation": "commit",
+                    "capture_id": capture.id,
+                    "error_type": error_status,
+                    "attempt": capture.commit_attempt_count,
+                    "retry_count": MAX_COMMIT_ATTEMPTS,
+                },
+                exc_info=True,
+            )
+        else:
+            # Will retry later
+            capture.commit_status = error_status if error_status in ["auth_failed", "unknown"] else "failed"
+            logger.warning(
+                f"Commit failed for capture {capture.id}, will retry (attempt {capture.commit_attempt_count}/{MAX_COMMIT_ATTEMPTS})",
+                extra={
+                    "component": "rtm_commit",
+                    "operation": "commit",
+                    "capture_id": capture.id,
+                    "error_type": error_status,
+                    "attempt": capture.commit_attempt_count,
+                    "retry_count": MAX_COMMIT_ATTEMPTS,
+                },
+                exc_info=True,
+            )
+
+        capture.commit_error_message = error_msg
         db.add(capture)
-        db.commit()
+        with transactional_session(db):
+            pass  # Context manager handles commit
         return
 
     db.add(capture)
-    db.commit()
+    with transactional_session(db):
+        pass  # Context manager handles commit
 
 
 def _get_active_anchor(db, today: date) -> Optional[Anchor]:
@@ -197,7 +319,8 @@ def _ensure_anchor_for_pending_approvals(db) -> None:
         Anchor.status == "active",
         Anchor.valid_until < today,
     ).update({"status": "expired"})
-    db.commit()
+    with transactional_session(db):
+        pass  # Context manager handles commit
 
     # Create a new anchor record.
     anchor = Anchor(
@@ -206,7 +329,8 @@ def _ensure_anchor_for_pending_approvals(db) -> None:
         valid_until=today,
     )
     db.add(anchor)
-    db.commit()
+    with transactional_session(db):
+        pass  # Context manager handles commit
     db.refresh(anchor)
 
     # Attempt to create the RTM anchor task.
@@ -236,7 +360,8 @@ def _ensure_anchor_for_pending_approvals(db) -> None:
         )
         anchor.external_state = json.dumps(state, ensure_ascii=False)
         db.add(anchor)
-        db.commit()
+        with transactional_session(db):
+            pass  # Context manager handles commit
         return
 
     state.update(
@@ -249,7 +374,8 @@ def _ensure_anchor_for_pending_approvals(db) -> None:
     )
     anchor.external_state = json.dumps(state, ensure_ascii=False)
     db.add(anchor)
-    db.commit()
+    with transactional_session(db):
+        pass  # Context manager handles commit
 
 
 def _poll_once() -> None:

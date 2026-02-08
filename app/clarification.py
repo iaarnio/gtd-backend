@@ -8,7 +8,10 @@ from typing import Any, Dict, Optional
 import requests
 from openai import OpenAI
 
+from .config import config
 from .db import SessionLocal
+from .db_utils import transactional_session
+from .http_utils import retry_with_backoff
 from .models import Capture
 
 logger = logging.getLogger(__name__)
@@ -26,7 +29,10 @@ Responsibilities:
 """
 
 
-POLL_INTERVAL_SECONDS = 30
+# Import polling interval and retry limits from config
+POLL_INTERVAL_SECONDS = config.CLARIFY_POLL_INTERVAL
+MAX_CLARIFY_ATTEMPTS = config.MAX_CLARIFY_RETRIES
+CLARIFY_RETRY_DELAYS = config.CLARIFY_RETRY_DELAYS
 
 
 SYSTEM_PROMPT = """
@@ -125,6 +131,42 @@ Return ONLY valid JSON matching this schema exactly:
 """
 
 
+def _should_retry_clarification(capture: Capture, now: datetime) -> bool:
+    """
+    Check if a failed clarification should be retried now.
+
+    Based on exponential backoff schedule:
+    - Attempt 1: immediate (attempt_count=0)
+    - Attempt 2: 5 minutes after failure
+    - Attempt 3: 30 minutes after failure
+    - Attempt 4: 2 hours after failure
+    - Attempt 5+: permanently failed (no more retries)
+    """
+    if capture.clarify_status == "pending":
+        # Never been attempted, try now
+        return True
+
+    if capture.clarify_status != "failed":
+        # Not a failed capture, skip
+        return False
+
+    if capture.clarify_attempt_count >= MAX_CLARIFY_ATTEMPTS:
+        # Max retries exceeded, mark as permanently failed
+        return False
+
+    if not capture.last_clarify_attempt_at:
+        # Failed but no last attempt time recorded, try again
+        return True
+
+    # Get the delay for the next attempt (based on current attempt count)
+    next_attempt_number = capture.clarify_attempt_count + 1
+    delay_seconds = CLARIFY_RETRY_DELAYS.get(next_attempt_number, 0)
+
+    # Check if enough time has passed
+    time_since_failure = (now - capture.last_clarify_attempt_at).total_seconds()
+    return time_since_failure >= delay_seconds
+
+
 def _get_client() -> Optional[OpenAI]:
     """
     Build an OpenAI client if an API key is configured.
@@ -148,64 +190,145 @@ def _build_user_prompt(raw_text: str) -> str:
     return f"Raaka GTD-tiivistys alla. Analysoi ja palauta vain JSON yllä kuvatun skeeman mukaisesti.\n\n---\n\n{raw_text}"
 
 
+@retry_with_backoff(max_retries=3, circuit_breaker="llm_api")
+def _call_llm_api(api_key: str, base_url: str, model: str, user_prompt: str, capture_id: int) -> Dict[str, Any]:
+    """
+    Internal function that makes the actual HTTP request to LLM API.
+    This is separated to allow the decorator to wrap only the network call.
+    Returns the parsed response.
+    """
+    response = requests.post(
+        f"{base_url}/chat/completions",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "model": model,
+            "messages": [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+            "temperature": 0.2,
+        },
+        timeout=config.LLM_API_TIMEOUT,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
 def _clarify_capture(api_key: str, base_url: str, capture: Capture) -> Optional[str]:
     """
     Call the LLM once for this capture and return the JSON string, or
     None on failure. Uses requests library directly for better OpenRouter compatibility.
     """
     model = os.environ.get("OPENAI_MODEL", "gpt-4.1-mini")
+    user_prompt = _build_user_prompt(capture.raw_text)
 
     try:
-        response = requests.post(
-            f"{base_url}/chat/completions",
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": model,
-                "messages": [
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": _build_user_prompt(capture.raw_text)},
-                ],
-                "temperature": 0.2,
-            },
-            timeout=30,
-        )
-        response.raise_for_status()
+        data = _call_llm_api(api_key, base_url, model, user_prompt, capture.id)
     except requests.exceptions.RequestException as e:
-        logger.error(f"LLM API error for capture {capture.id}: {e}", exc_info=True)
+        logger.error(
+            f"LLM API error for capture {capture.id}",
+            extra={
+                "component": "clarification",
+                "external_service": "llm",
+                "operation": "clarify_capture",
+                "capture_id": capture.id,
+                "error_type": type(e).__name__,
+            },
+            exc_info=True,
+        )
+        return None
+    except Exception as e:
+        logger.error(
+            f"Unexpected error calling LLM API for capture {capture.id}",
+            extra={
+                "component": "clarification",
+                "external_service": "llm",
+                "operation": "clarify_capture",
+                "capture_id": capture.id,
+                "error_type": type(e).__name__,
+            },
+            exc_info=True,
+        )
         return None
 
     try:
-        data = response.json()
-    except json.JSONDecodeError as e:
-        logger.error(f"Failed to parse JSON response for capture {capture.id}: {e}")
+        data_dict = data if isinstance(data, dict) else {}
+    except Exception as e:
+        logger.error(
+            f"Failed to parse LLM response for capture {capture.id}",
+            extra={
+                "component": "clarification",
+                "error_type": "response_parse_error",
+                "capture_id": capture.id,
+            },
+            exc_info=True,
+        )
         return None
 
-    if "error" in data:
-        logger.error(f"LLM API returned error for capture {capture.id}: {data['error']}")
+    if "error" in data_dict:
+        logger.error(
+            f"LLM API returned error for capture {capture.id}",
+            extra={
+                "component": "clarification",
+                "external_service": "llm",
+                "error_type": "llm_error",
+                "capture_id": capture.id,
+            },
+        )
         return None
 
     try:
-        content = data["choices"][0]["message"]["content"]
+        content = data_dict["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError) as e:
-        logger.error(f"Unexpected response structure for capture {capture.id}: {e}")
+        logger.error(
+            f"Unexpected response structure from LLM for capture {capture.id}",
+            extra={
+                "component": "clarification",
+                "error_type": "unexpected_structure",
+                "capture_id": capture.id,
+            },
+            exc_info=True,
+        )
         return None
 
     if not content:
-        logger.warning(f"Empty response from LLM for capture {capture.id}")
+        logger.warning(
+            f"Empty response from LLM for capture {capture.id}",
+            extra={
+                "component": "clarification",
+                "error_type": "empty_response",
+                "capture_id": capture.id,
+            },
+        )
         return None
 
     # Validate that the response is valid JSON and roughly matches the expected structure.
     try:
         result_data: Dict[str, Any] = json.loads(content)
     except json.JSONDecodeError as e:
-        logger.error(f"Invalid JSON in LLM response for capture {capture.id}: {e}")
+        logger.error(
+            f"Invalid JSON in LLM response for capture {capture.id}",
+            extra={
+                "component": "clarification",
+                "error_type": "invalid_json",
+                "capture_id": capture.id,
+            },
+            exc_info=True,
+        )
         return None
 
     if "confidence_score" not in result_data:
-        logger.warning(f"Missing confidence_score in response for capture {capture.id}")
+        logger.warning(
+            f"Missing confidence_score in LLM response for capture {capture.id}",
+            extra={
+                "component": "clarification",
+                "error_type": "missing_field",
+                "capture_id": capture.id,
+            },
+        )
         return None
 
     return content
@@ -225,34 +348,121 @@ def _poll_once() -> None:
 
     db = SessionLocal()
     try:
-        # Select captures that are still proposed and have no
-        # clarification stored yet.
+        from datetime import datetime
+
+        now = datetime.utcnow()
+
+        # Select captures that need clarification:
+        # - proposed status AND (pending clarification or failed with retry backoff elapsed)
         pending = (
             db.query(Capture)
-            .filter(Capture.decision_status == "proposed", Capture.clarify_json.is_(None))
+            .filter(
+                Capture.decision_status == "proposed",
+                Capture.clarify_status.in_(["pending", "failed"])
+            )
             .order_by(Capture.created_at.asc())
             .all()
         )
-        logger.info(f"Clarification poll: found {len(pending)} pending captures")
+        logger.info(f"Clarification poll: found {len(pending)} captures to process")
 
         for capture in pending:
-            logger.info(f"Clarifying capture {capture.id}: {capture.raw_text[:50]}...")
-            result = _clarify_capture(api_key, base_url, capture)
-            if result is None:
-                # Clarification failed - save error info for user visibility
-                error_info = {
-                    "type": "error",
-                    "status": "clarification_failed",
-                    "message": "Failed to clarify email. Check logs for details. This can be retried later.",
-                    "requires_user_attention": True,
-                }
-                capture.clarify_json = json.dumps(error_info, ensure_ascii=False)
-                logger.warning(f"Saved clarification error info for capture {capture.id}")
-            else:
-                capture.clarify_json = result
-                logger.info(f"Successfully clarified capture {capture.id}")
+            # Check if this failed capture should be retried now
+            if not _should_retry_clarification(capture, now):
+                next_attempt = capture.clarify_attempt_count + 1
+                delay = CLARIFY_RETRY_DELAYS.get(next_attempt, 0)
+                logger.debug(
+                    f"Capture {capture.id}: skipping (next attempt #{next_attempt} in {delay}s)",
+                    extra={
+                        "component": "clarification",
+                        "operation": "poll",
+                        "capture_id": capture.id,
+                    },
+                )
+                continue
+
+            # Mark as in_progress before attempting
+            capture.clarify_status = "in_progress"
+            capture.clarify_attempt_count += 1
             db.add(capture)
-            db.commit()
+            with transactional_session(db):
+                pass  # Context manager handles commit
+
+            logger.info(
+                f"Clarifying capture {capture.id} (attempt {capture.clarify_attempt_count}/{MAX_CLARIFY_ATTEMPTS}): {capture.raw_text[:50]}...",
+                extra={
+                    "component": "clarification",
+                    "operation": "clarify",
+                    "capture_id": capture.id,
+                    "attempt": capture.clarify_attempt_count,
+                },
+            )
+
+            result = _clarify_capture(api_key, base_url, capture)
+            capture.last_clarify_attempt_at = now
+
+            if result is None:
+                # Clarification failed
+                if capture.clarify_attempt_count >= MAX_CLARIFY_ATTEMPTS:
+                    # Max retries exceeded
+                    capture.clarify_status = "permanently_failed"
+                    error_info = {
+                        "type": "error",
+                        "status": "clarification_permanently_failed",
+                        "message": f"Failed to clarify after {MAX_CLARIFY_ATTEMPTS} attempts. Requires manual review.",
+                        "requires_user_attention": True,
+                        "attempts": capture.clarify_attempt_count,
+                    }
+                    capture.clarify_json = json.dumps(error_info, ensure_ascii=False)
+                    logger.error(
+                        f"Clarification permanently failed for capture {capture.id} after {MAX_CLARIFY_ATTEMPTS} attempts",
+                        extra={
+                            "component": "clarification",
+                            "operation": "clarify",
+                            "capture_id": capture.id,
+                            "error_type": "permanently_failed",
+                            "attempt": capture.clarify_attempt_count,
+                        },
+                    )
+                else:
+                    # Will retry later
+                    capture.clarify_status = "failed"
+                    error_info = {
+                        "type": "error",
+                        "status": "clarification_failed",
+                        "message": f"Failed to clarify. Will retry (attempt {capture.clarify_attempt_count}/{MAX_CLARIFY_ATTEMPTS}).",
+                        "requires_user_attention": False,
+                        "attempts": capture.clarify_attempt_count,
+                    }
+                    capture.clarify_json = json.dumps(error_info, ensure_ascii=False)
+                    logger.warning(
+                        f"Clarification failed for capture {capture.id}, will retry later",
+                        extra={
+                            "component": "clarification",
+                            "operation": "clarify",
+                            "capture_id": capture.id,
+                            "error_type": "clarification_failed",
+                            "attempt": capture.clarify_attempt_count,
+                            "retry_count": MAX_CLARIFY_ATTEMPTS,
+                        },
+                    )
+            else:
+                # Success
+                capture.clarify_status = "completed"
+                capture.clarify_json = result
+                logger.info(
+                    f"Successfully clarified capture {capture.id}",
+                    extra={
+                        "component": "clarification",
+                        "operation": "clarify",
+                        "capture_id": capture.id,
+                        "attempt": capture.clarify_attempt_count,
+                    },
+                )
+
+            db.add(capture)
+            with transactional_session(db):
+                pass  # Context manager handles commit
+
     finally:
         db.close()
 

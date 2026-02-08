@@ -33,6 +33,25 @@ class Capture(Base):
     # Clarification result stored verbatim as JSON text
     clarify_json = Column(Text, nullable=True)
 
+    # Clarification state tracking
+    # pending = awaiting clarification attempt
+    # in_progress = currently being clarified
+    # completed = successfully clarified
+    # failed = clarification attempted but failed (will retry)
+    # permanently_failed = max retries exceeded (requires manual intervention)
+    clarify_status = Column(
+        String(20),
+        nullable=False,
+        default="pending",
+        index=True,
+    )
+
+    # Number of clarification attempts made
+    clarify_attempt_count = Column(Integer, nullable=False, default=0)
+
+    # When this capture was last attempted to clarify
+    last_clarify_attempt_at = Column(DateTime, nullable=True)
+
     # Decision state
     decision_status = Column(
         String(20),
@@ -46,7 +65,10 @@ class Capture(Base):
     # Commit state (separate from decision_status)
     # pending = not yet committed to RTM
     # committed = successfully committed
-    # failed = commit was attempted but failed
+    # failed = commit was attempted but failed (will retry)
+    # auth_failed = authentication failed (requires user re-auth)
+    # unknown = timeout/unknown state (requires manual review)
+    # permanently_failed = max retries exceeded (requires manual intervention)
     commit_status = Column(
         String(20),
         nullable=False,
@@ -56,6 +78,12 @@ class Capture(Base):
 
     # When this capture was last attempted to commit
     last_commit_attempt_at = Column(DateTime, nullable=True)
+
+    # Number of commit attempts made
+    commit_attempt_count = Column(Integer, nullable=False, default=0)
+
+    # Detailed error message from last failed commit (for operator visibility)
+    commit_error_message = Column(Text, nullable=True)
 
     # RTM task IDs and metadata from successful commit
     rtm_task_id = Column(String(255), nullable=True)

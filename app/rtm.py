@@ -1,8 +1,14 @@
 import hashlib
+import logging
 import os
 from typing import Any, Dict, Optional
 
 import requests
+
+from .config import config
+from .http_utils import retry_with_backoff
+
+logger = logging.getLogger(__name__)
 
 
 """
@@ -70,21 +76,22 @@ def _sign_params(shared_secret: str, params: Dict[str, str]) -> str:
     return hashlib.md5(raw).hexdigest()
 
 
-def call(method: str, params: Dict[str, str], timeout_seconds: int = 20, auth_token: Optional[str] = None) -> Dict[str, Any]:
+@retry_with_backoff(max_retries=3, circuit_breaker="rtm_api")
+def _call_rtm_api(
+    method: str,
+    params: Dict[str, str],
+    timeout_seconds: int = 20,
+) -> str:
+    """
+    Internal function that makes the actual HTTP request to RTM API.
+    This is separated to allow the decorator to wrap only the network call.
+    """
     api_key = _get_env("RTM_API_KEY")
     shared_secret = _get_env("RTM_SHARED_SECRET")
-
-    # Use provided token, or fall back to environment variable
-    if auth_token is None:
-        auth_token = _get_env("RTM_AUTH_TOKEN")
-
-    if not api_key or not shared_secret or not auth_token:
-        raise RuntimeError("RTM is not configured")
 
     base_params: Dict[str, str] = {
         "method": method,
         "api_key": api_key,
-        "auth_token": auth_token,
         **params,
     }
 
@@ -95,15 +102,46 @@ def call(method: str, params: Dict[str, str], timeout_seconds: int = 20, auth_to
         "api_sig": api_sig,
     }
 
-    # 🔒 RTM: GET only, no format param
     response = requests.get(
         RTM_API_BASE_URL,
         params=request_params,
         timeout=timeout_seconds,
     )
     response.raise_for_status()
+    return response.text
 
-    text = response.text
+
+def call(method: str, params: Dict[str, str], timeout_seconds: Optional[int] = None, auth_token: Optional[str] = None) -> Dict[str, Any]:
+    api_key = _get_env("RTM_API_KEY")
+    shared_secret = _get_env("RTM_SHARED_SECRET")
+
+    # Use provided token, or fall back to environment variable
+    if auth_token is None:
+        auth_token = _get_env("RTM_AUTH_TOKEN")
+
+    if not api_key or not shared_secret or not auth_token:
+        raise RuntimeError("RTM is not configured")
+
+    # Use provided timeout, or default from config
+    if timeout_seconds is None:
+        timeout_seconds = config.RTM_API_TIMEOUT
+
+    base_params = {**params, "auth_token": auth_token}
+
+    try:
+        text = _call_rtm_api(method, base_params, timeout_seconds)
+    except Exception as e:
+        logger.error(
+            f"RTM API call failed for method {method}",
+            extra={
+                "component": "rtm",
+                "external_service": "rtm",
+                "operation": method,
+                "error_type": type(e).__name__,
+            },
+            exc_info=True,
+        )
+        raise
 
     # timelines.create returns XML
     if method == "rtm.timelines.create":
@@ -163,17 +201,11 @@ def add_task(timeline: str, name: str, auth_token: Optional[str] = None) -> Dict
     raise RuntimeError(f"Unexpected response from rtm.tasks.add: {data}")
 
 
-def auth_check_token(token: str) -> Dict[str, Any]:
-    """
-    Verify that an auth token is valid and get user info.
-
-    Returns the full RTM response dict.
-    """
-    api_key = _get_env("RTM_API_KEY")
-    shared_secret = _get_env("RTM_SHARED_SECRET")
-
-    if not api_key or not shared_secret:
-        raise RuntimeError("RTM is not configured")
+@retry_with_backoff(max_retries=3, circuit_breaker="rtm_api")
+def _check_token_http(token: str, api_key: str, shared_secret: str, timeout_seconds: Optional[int] = None) -> str:
+    """Make HTTP request to check token."""
+    if timeout_seconds is None:
+        timeout_seconds = config.RTM_API_TIMEOUT
 
     base_params: Dict[str, str] = {
         "method": "rtm.auth.checkToken",
@@ -191,12 +223,41 @@ def auth_check_token(token: str) -> Dict[str, Any]:
     response = requests.get(
         RTM_API_BASE_URL,
         params=request_params,
-        timeout=20,
+        timeout=timeout_seconds,
     )
     response.raise_for_status()
+    return response.text
+
+
+def auth_check_token(token: str) -> Dict[str, Any]:
+    """
+    Verify that an auth token is valid and get user info.
+
+    Returns the full RTM response dict.
+    """
+    api_key = _get_env("RTM_API_KEY")
+    shared_secret = _get_env("RTM_SHARED_SECRET")
+
+    if not api_key or not shared_secret:
+        raise RuntimeError("RTM is not configured")
+
+    try:
+        response_text = _check_token_http(token, api_key, shared_secret)
+    except Exception as e:
+        logger.error(
+            "Failed to check RTM token",
+            extra={
+                "component": "rtm",
+                "external_service": "rtm",
+                "operation": "auth_check_token",
+                "error_type": type(e).__name__,
+            },
+            exc_info=True,
+        )
+        raise
 
     import xml.etree.ElementTree as ET
-    root = ET.fromstring(response.text)
+    root = ET.fromstring(response_text)
 
     # Convert XML to dict-like structure (root IS the <rsp> element)
     if root.get("stat") == "ok":
@@ -229,17 +290,11 @@ def auth_check_token(token: str) -> Dict[str, Any]:
     return {"stat": "fail", "err": {"msg": "Unknown error"}}
 
 
-def auth_get_frob() -> str:
-    """
-    Get a frob for the RTM auth flow.
-
-    Returns the frob string.
-    """
-    api_key = _get_env("RTM_API_KEY")
-    shared_secret = _get_env("RTM_SHARED_SECRET")
-
-    if not api_key or not shared_secret:
-        raise RuntimeError("RTM is not configured")
+@retry_with_backoff(max_retries=3, circuit_breaker="rtm_api")
+def _get_frob_http(api_key: str, shared_secret: str, timeout_seconds: Optional[int] = None) -> str:
+    """Make HTTP request to get frob."""
+    if timeout_seconds is None:
+        timeout_seconds = config.RTM_API_TIMEOUT
 
     base_params: Dict[str, str] = {
         "method": "rtm.auth.getFrob",
@@ -256,31 +311,54 @@ def auth_get_frob() -> str:
     response = requests.get(
         RTM_API_BASE_URL,
         params=request_params,
-        timeout=20,
+        timeout=timeout_seconds,
     )
     response.raise_for_status()
-
-    import xml.etree.ElementTree as ET
-    root = ET.fromstring(response.text)
-    frob = root.findtext("frob")
-
-    if not frob:
-        raise RuntimeError(f"Failed to get frob: {response.text}")
-
-    return frob
+    return response.text
 
 
-def auth_get_token(frob: str) -> Dict[str, Any]:
+def auth_get_frob() -> str:
     """
-    Exchange a frob for an auth token.
+    Get a frob for the RTM auth flow.
 
-    Returns dict with token, perms, and user info.
+    Returns the frob string.
     """
     api_key = _get_env("RTM_API_KEY")
     shared_secret = _get_env("RTM_SHARED_SECRET")
 
     if not api_key or not shared_secret:
         raise RuntimeError("RTM is not configured")
+
+    try:
+        response_text = _get_frob_http(api_key, shared_secret)
+    except Exception as e:
+        logger.error(
+            "Failed to get RTM frob",
+            extra={
+                "component": "rtm",
+                "external_service": "rtm",
+                "operation": "auth_get_frob",
+                "error_type": type(e).__name__,
+            },
+            exc_info=True,
+        )
+        raise
+
+    import xml.etree.ElementTree as ET
+    root = ET.fromstring(response_text)
+    frob = root.findtext("frob")
+
+    if not frob:
+        raise RuntimeError(f"Failed to get frob: {response_text}")
+
+    return frob
+
+
+@retry_with_backoff(max_retries=3, circuit_breaker="rtm_api")
+def _get_token_http(frob: str, api_key: str, shared_secret: str, timeout_seconds: Optional[int] = None) -> str:
+    """Make HTTP request to get token."""
+    if timeout_seconds is None:
+        timeout_seconds = config.RTM_API_TIMEOUT
 
     base_params: Dict[str, str] = {
         "method": "rtm.auth.getToken",
@@ -298,12 +376,41 @@ def auth_get_token(frob: str) -> Dict[str, Any]:
     response = requests.get(
         RTM_API_BASE_URL,
         params=request_params,
-        timeout=20,
+        timeout=timeout_seconds,
     )
     response.raise_for_status()
+    return response.text
+
+
+def auth_get_token(frob: str) -> Dict[str, Any]:
+    """
+    Exchange a frob for an auth token.
+
+    Returns dict with token, perms, and user info.
+    """
+    api_key = _get_env("RTM_API_KEY")
+    shared_secret = _get_env("RTM_SHARED_SECRET")
+
+    if not api_key or not shared_secret:
+        raise RuntimeError("RTM is not configured")
+
+    try:
+        response_text = _get_token_http(frob, api_key, shared_secret)
+    except Exception as e:
+        logger.error(
+            "Failed to get RTM token",
+            extra={
+                "component": "rtm",
+                "external_service": "rtm",
+                "operation": "auth_get_token",
+                "error_type": type(e).__name__,
+            },
+            exc_info=True,
+        )
+        raise
 
     import xml.etree.ElementTree as ET
-    root = ET.fromstring(response.text)
+    root = ET.fromstring(response_text)
 
     # Root IS the <rsp> element
     if root.get("stat") == "ok":

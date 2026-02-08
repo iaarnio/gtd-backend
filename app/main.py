@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 from typing import Any, Dict, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Request, status
@@ -9,16 +10,18 @@ from sqlalchemy.orm import Session
 
 from . import clarification, email_ingestion, models, rtm_commit  # noqa: F401  - ensure models are imported
 from .db import Base, engine, get_db
+from .db_utils import transactional_session
+from .logging_config import configure_logging, get_logger
 from .rtm import auth_get_frob, auth_get_token
 from .rtm_auth import is_rtm_auth_valid, store_rtm_auth, bootstrap_rtm_auth_from_env
 from .schemas import CaptureCreate, CaptureOut, ClarificationUpdate
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+configure_logging(
+    json_logs=os.environ.get("LOG_FORMAT", "json") == "json",
+    log_level=os.environ.get("LOG_LEVEL", "INFO"),
 )
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 app = FastAPI(title="Personal GTD Backend", version="0.1.0")
 templates = Jinja2Templates(directory="app/templates")
@@ -46,11 +49,180 @@ def initialize_database() -> None:
 
 
 @app.get("/health")
-def health_check() -> dict:
+def health_check(db: Session = Depends(get_db)) -> dict:
     """
-    Basic health endpoint used to verify that the service is running.
+    Enhanced health endpoint with per-component status checks.
+
+    Returns detailed status for monitoring systems (Kubernetes probes, monitoring dashboards).
     """
-    return {"status": "ok"}
+    import os
+
+    health_status = {
+        "status": "ok",
+        "components": {}
+    }
+
+    # Check database
+    try:
+        db.execute("SELECT 1")
+        health_status["components"]["database"] = {
+            "status": "ok",
+            "message": "SQLite database is responsive"
+        }
+    except Exception as e:
+        health_status["components"]["database"] = {
+            "status": "error",
+            "message": f"Database check failed: {str(e)}"
+        }
+        health_status["status"] = "degraded"
+
+    # Check RTM configuration
+    rtm_api_key = os.environ.get("RTM_API_KEY")
+    rtm_secret = os.environ.get("RTM_SHARED_SECRET")
+    if rtm_api_key and rtm_secret:
+        try:
+            from .rtm_auth import is_rtm_auth_valid
+            if is_rtm_auth_valid():
+                health_status["components"]["rtm"] = {
+                    "status": "ok",
+                    "message": "RTM is configured and authenticated"
+                }
+            else:
+                health_status["components"]["rtm"] = {
+                    "status": "degraded",
+                    "message": "RTM is configured but not authenticated (requires user action)"
+                }
+        except Exception as e:
+            health_status["components"]["rtm"] = {
+                "status": "error",
+                "message": f"RTM auth check failed: {str(e)}"
+            }
+    else:
+        health_status["components"]["rtm"] = {
+            "status": "not_configured",
+            "message": "RTM is not configured (optional)"
+        }
+
+    # Check IMAP configuration
+    imap_user = os.environ.get("IMAP_USERNAME")
+    imap_pass = os.environ.get("IMAP_PASSWORD")
+    if imap_user and imap_pass:
+        health_status["components"]["email"] = {
+            "status": "ok",
+            "message": "Email ingestion is configured (actual connection tested on poll)"
+        }
+    else:
+        health_status["components"]["email"] = {
+            "status": "not_configured",
+            "message": "Email ingestion is not configured (optional)"
+        }
+
+    # Check LLM configuration
+    llm_key = os.environ.get("OPENAI_API_KEY")
+    llm_base_url = os.environ.get("OPENAI_BASE_URL")
+    if llm_key and llm_base_url:
+        health_status["components"]["llm"] = {
+            "status": "ok",
+            "message": "LLM clarification is configured (actual connection tested on poll)"
+        }
+    else:
+        health_status["components"]["llm"] = {
+            "status": "not_configured",
+            "message": "LLM clarification is not configured (optional)"
+        }
+
+    return health_status
+
+
+@app.get("/metrics")
+def metrics(db: Session = Depends(get_db)) -> dict:
+    """
+    Metrics endpoint for Grafana and monitoring systems.
+
+    Returns JSON with capture counts, pending work, and recent failure information
+    suitable for Grafana JSON datasource or Prometheus compatible metrics.
+    """
+    from sqlalchemy import func
+
+    metrics_data = {
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "captures": {
+            "total": db.query(func.count(models.Capture.id)).scalar() or 0,
+            "by_decision_status": {},
+            "by_commit_status": {},
+            "by_clarify_status": {},
+        },
+        "pending_work": {},
+        "recent_failures": {},
+        "system": {}
+    }
+
+    # Capture counts by decision_status
+    for status in ["proposed", "approved", "rejected"]:
+        count = db.query(func.count(models.Capture.id)).filter(
+            models.Capture.decision_status == status
+        ).scalar() or 0
+        metrics_data["captures"]["by_decision_status"][status] = count
+
+    # Capture counts by commit_status
+    for status in ["pending", "committed", "failed", "auth_failed", "unknown", "permanently_failed"]:
+        count = db.query(func.count(models.Capture.id)).filter(
+            models.Capture.commit_status == status
+        ).scalar() or 0
+        if count > 0:
+            metrics_data["captures"]["by_commit_status"][status] = count
+
+    # Capture counts by clarify_status
+    for status in ["pending", "in_progress", "completed", "failed", "permanently_failed"]:
+        count = db.query(func.count(models.Capture.id)).filter(
+            models.Capture.clarify_status == status
+        ).scalar() or 0
+        if count > 0:
+            metrics_data["captures"]["by_clarify_status"][status] = count
+
+    # Pending work counts
+    metrics_data["pending_work"]["awaiting_decision"] = (
+        db.query(func.count(models.Capture.id)).filter(
+            models.Capture.decision_status == "proposed"
+        ).scalar() or 0
+    )
+    metrics_data["pending_work"]["awaiting_rtm_sync"] = (
+        db.query(func.count(models.Capture.id)).filter(
+            models.Capture.decision_status == "approved",
+            models.Capture.commit_status != "committed"
+        ).scalar() or 0
+    )
+    metrics_data["pending_work"]["awaiting_clarification"] = (
+        db.query(func.count(models.Capture.id)).filter(
+            models.Capture.decision_status == "proposed",
+            models.Capture.clarify_status.in_(["pending", "in_progress"])
+        ).scalar() or 0
+    )
+
+    # Recent failures (last 24 hours)
+    from datetime import timedelta
+    one_day_ago = datetime.utcnow() - timedelta(days=1)
+
+    failed_clarifications = (
+        db.query(func.count(models.Capture.id)).filter(
+            models.Capture.clarify_status == "permanently_failed"
+        ).scalar() or 0
+    )
+    metrics_data["recent_failures"]["clarification_permanent_failures"] = failed_clarifications
+
+    failed_commits = (
+        db.query(func.count(models.Capture.id)).filter(
+            models.Capture.last_commit_attempt_at >= one_day_ago,
+            models.Capture.commit_status.in_(["failed", "auth_failed", "unknown", "permanently_failed"])
+        ).scalar() or 0
+    )
+    metrics_data["recent_failures"]["commit_failures_24h"] = failed_commits
+
+    # System info
+    metrics_data["system"]["running"] = True
+    metrics_data["system"]["version"] = "0.1.0"
+
+    return metrics_data
 
 
 @app.get("/audit-log", response_class=HTMLResponse)
@@ -84,6 +256,8 @@ def audit_log(request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
             "decision_status": c.decision_status,
             "decision_at": c.decision_at,
             "commit_status": c.commit_status,
+            "commit_attempt_count": c.commit_attempt_count,
+            "commit_error_message": c.commit_error_message,
             "last_commit_attempt_at": c.last_commit_attempt_at,
             "rtm_task_id": c.rtm_task_id,
         })
@@ -104,7 +278,16 @@ def _parse_clarify_json(raw: Optional[str]) -> Optional[Dict[str, Any]]:
         data = json.loads(raw)
         if isinstance(data, dict):
             return data
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as e:
+        logger.error(
+            "Failed to parse clarification JSON",
+            extra={
+                "component": "ui",
+                "operation": "parse_json",
+                "error_type": "json_decode_error",
+            },
+            exc_info=True,
+        )
         return None
     return None
 
@@ -124,7 +307,8 @@ def create_capture(payload: CaptureCreate, db: Session = Depends(get_db)) -> Cap
         source_link=payload.source_link,
     )
     db.add(capture)
-    db.commit()
+    with transactional_session(db):
+        pass  # Context manager handles commit
     db.refresh(capture)
     return capture
 
@@ -174,6 +358,12 @@ def approvals_list(request: Request, db: Session = Depends(get_db)) -> HTMLRespo
                 status_label = "Approved, waiting for RTM sync"
             elif c.commit_status == "failed":
                 status_label = "RTM sync failed (will retry)"
+            elif c.commit_status == "auth_failed":
+                status_label = "RTM: Authentication required"
+            elif c.commit_status == "unknown":
+                status_label = "RTM: Unknown state (requires manual review)"
+            elif c.commit_status == "permanently_failed":
+                status_label = "RTM: Permanently failed (manual review needed)"
             elif c.commit_status == "committed":
                 status_label = "Synced to RTM ✓"
             else:
@@ -188,6 +378,7 @@ def approvals_list(request: Request, db: Session = Depends(get_db)) -> HTMLRespo
                 "clar_dict": clar,
                 "decision_status": c.decision_status,
                 "status_label": status_label,
+                "commit_error_message": c.commit_error_message,
             }
         )
 
@@ -285,7 +476,8 @@ async def approval_update_clarification(
     if capture.decision_status == "approved":
         capture.commit_status = "pending"
     db.add(capture)
-    db.commit()
+    with transactional_session(db):
+        pass  # Context manager handles commit
 
     return RedirectResponse(url=f"/approvals/{capture_id}", status_code=status.HTTP_303_SEE_OTHER)
 
@@ -355,7 +547,8 @@ async def approve_capture(
     capture.decision_status = "approved"
     capture.decision_at = datetime.utcnow()
     db.add(capture)
-    db.commit()
+    with transactional_session(db):
+        pass  # Context manager handles commit
 
     return RedirectResponse(url="/approvals", status_code=status.HTTP_303_SEE_OTHER)
 
@@ -417,7 +610,8 @@ async def reject_capture(
     capture.decision_status = "rejected"
     capture.decision_at = datetime.utcnow()
     db.add(capture)
-    db.commit()
+    with transactional_session(db):
+        pass  # Context manager handles commit
 
     return RedirectResponse(url="/approvals", status_code=status.HTTP_303_SEE_OTHER)
 
@@ -444,7 +638,8 @@ def update_clarification(
     # while preserving the full AI output structure.
     capture.clarify_json = json.dumps(payload.data, ensure_ascii=False)
     db.add(capture)
-    db.commit()
+    with transactional_session(db):
+        pass  # Context manager handles commit
     db.refresh(capture)
     return capture
 

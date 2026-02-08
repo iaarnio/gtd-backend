@@ -33,11 +33,20 @@ def _get_database_path() -> Path:
 DATABASE_PATH = _get_database_path()
 DATABASE_URL = f"sqlite:///{DATABASE_PATH}"
 
-# check_same_thread=False is required when using SQLite with FastAPI's
-# dependency-injected sessions in a single process.
+# Get database lock timeout from environment, default to 30 seconds
+DB_LOCK_TIMEOUT = float(os.environ.get("DB_LOCK_TIMEOUT", "30.0"))
+
+# SQLite configuration:
+# - check_same_thread=False is required for FastAPI's dependency-injected sessions in single process
+# - timeout sets how long SQLite waits before raising "database is locked" error
+# - pool_pre_ping=True verifies connections are valid before use
 engine = create_engine(
     DATABASE_URL,
-    connect_args={"check_same_thread": False},
+    connect_args={
+        "check_same_thread": False,
+        "timeout": DB_LOCK_TIMEOUT,
+    },
+    pool_pre_ping=True,
 )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

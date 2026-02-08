@@ -1,0 +1,161 @@
+{
+  "dashboard": {
+    "title": "GTD Backend Monitoring",
+    "description": "Real-time monitoring of GTD backend: captures, clarification, and RTM sync status",
+    "tags": ["gtd", "backend", "monitoring"],
+    "timezone": "UTC",
+    "panels": [
+      {
+        "title": "System Status",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "health.components.database.status",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"color": "red", "value": null},
+                {"color": "yellow", "value": 0},
+                {"color": "green", "value": 1}
+              ]
+            },
+            "mappings": [
+              {
+                "type": "value",
+                "options": {
+                  "\"ok\"": {"text": "OK", "color": "green"},
+                  "\"error\"": {"text": "ERROR", "color": "red"},
+                  "\"degraded\"": {"text": "DEGRADED", "color": "yellow"}
+                }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "title": "Total Captures",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "metrics.captures.total",
+            "refId": "A"
+          }
+        ]
+      },
+      {
+        "title": "Captures by Decision Status",
+        "type": "piechart",
+        "targets": [
+          {
+            "expr": "metrics.captures.by_decision_status",
+            "refId": "A"
+          }
+        ],
+        "options": {
+          "legend": {
+            "displayMode": "list",
+            "placement": "bottom"
+          }
+        }
+      },
+      {
+        "title": "Pending Work",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "metrics.pending_work.awaiting_decision",
+            "refId": "A",
+            "legendFormat": "Awaiting Decision"
+          },
+          {
+            "expr": "metrics.pending_work.awaiting_rtm_sync",
+            "refId": "B",
+            "legendFormat": "Awaiting RTM Sync"
+          },
+          {
+            "expr": "metrics.pending_work.awaiting_clarification",
+            "refId": "C",
+            "legendFormat": "Awaiting Clarification"
+          }
+        ]
+      },
+      {
+        "title": "RTM Commit Status",
+        "type": "piechart",
+        "targets": [
+          {
+            "expr": "metrics.captures.by_commit_status",
+            "refId": "A"
+          }
+        ],
+        "options": {
+          "legend": {
+            "displayMode": "list",
+            "placement": "bottom"
+          }
+        }
+      },
+      {
+        "title": "Clarification Status",
+        "type": "piechart",
+        "targets": [
+          {
+            "expr": "metrics.captures.by_clarify_status",
+            "refId": "A"
+          }
+        ],
+        "options": {
+          "legend": {
+            "displayMode": "list",
+            "placement": "bottom"
+          }
+        }
+      },
+      {
+        "title": "Recent Failures (24h)",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "metrics.recent_failures.clarification_permanent_failures",
+            "refId": "A",
+            "legendFormat": "Permanent Clarification Failures"
+          },
+          {
+            "expr": "metrics.recent_failures.commit_failures_24h",
+            "refId": "B",
+            "legendFormat": "RTM Commit Failures"
+          }
+        ]
+      }
+    ]
+  },
+  "setup_instructions": {
+    "description": "How to set up this dashboard in Grafana",
+    "steps": [
+      "1. Create a new JSON datasource in Grafana pointing to: http://gtd-backend:8000/metrics",
+      "2. Create another datasource for /health endpoint: http://gtd-backend:8000/health",
+      "3. Import this dashboard JSON",
+      "4. Update panel targets to match your datasource names",
+      "5. Set refresh interval to 30 seconds"
+    ],
+    "notes": {
+      "json_datasource": "This dashboard uses Grafana's JSON API datasource. Install the JSON datasource plugin if not already available.",
+      "data_structure": "The /metrics endpoint returns a JSON object with captures, pending_work, and recent_failures sections.",
+      "time_series": "For time series data, configure a Loki datasource and use LogQL queries on the structured logs."
+    }
+  },
+  "example_queries": {
+    "loki_error_rate": "{job=\"gtd-backend\"} | json | level=\"ERROR\" | __error__=\"\" | rate [5m]",
+    "loki_rtm_errors": "{job=\"gtd-backend\"} | json | external_service=\"rtm\" | level=\"ERROR\"",
+    "loki_clarification_failures": "{job=\"gtd-backend\"} | json | component=\"clarification\" | error_type=~\"(failed|permanently_failed)\"",
+    "loki_commit_failures": "{job=\"gtd-backend\"} | json | component=\"rtm_commit\" | error_type=\"commit_failed\""
+  }
+}
