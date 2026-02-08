@@ -1,0 +1,198 @@
+{% extends "base.html" %}
+
+{% block title %}GTD Backend Dashboard{% endblock %}
+
+{% block content %}
+<h1>GTD Backend Dashboard</h1>
+
+<style>
+    .dashboard-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+        gap: 20px;
+        margin-bottom: 30px;
+    }
+
+    .card {
+        background: #f5f5f5;
+        border: 1px solid #ddd;
+        border-radius: 8px;
+        padding: 20px;
+        text-decoration: none;
+        color: inherit;
+        transition: all 0.2s;
+        display: flex;
+        flex-direction: column;
+    }
+
+    .card:hover {
+        background: #efefef;
+        border-color: #999;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+
+    .card h2 {
+        margin: 0 0 10px 0;
+        font-size: 1.3em;
+    }
+
+    .card p {
+        margin: 5px 0;
+        color: #666;
+        font-size: 0.95em;
+    }
+
+    .stat {
+        font-size: 2em;
+        font-weight: bold;
+        color: #0066cc;
+        margin: 10px 0;
+    }
+
+    .stat-label {
+        font-size: 0.9em;
+        color: #999;
+        margin-top: 5px;
+    }
+
+    .vitals {
+        background: #f0f8ff;
+        border: 1px solid #b0d4ff;
+        border-radius: 8px;
+        padding: 20px;
+        margin-bottom: 30px;
+    }
+
+    .vitals h2 {
+        margin-top: 0;
+    }
+
+    .vital-row {
+        display: flex;
+        justify-content: space-around;
+        flex-wrap: wrap;
+        gap: 20px;
+        margin: 15px 0;
+    }
+
+    .vital-item {
+        text-align: center;
+    }
+
+    .vital-number {
+        font-size: 2.5em;
+        font-weight: bold;
+        color: #0066cc;
+    }
+
+    .vital-label {
+        font-size: 0.9em;
+        color: #666;
+        margin-top: 5px;
+    }
+
+    .warning {
+        color: #ff9800;
+    }
+
+    .error {
+        color: #f44336;
+    }
+
+    .success {
+        color: #4caf50;
+    }
+</style>
+
+<!-- Vital Information -->
+<div class="vitals">
+    <h2>⚡ Vital Information</h2>
+
+    <div class="vital-row">
+        <div class="vital-item">
+            <div class="vital-number {% if pending_approvals > 0 %}warning{% endif %}">{{ pending_approvals }}</div>
+            <div class="vital-label">Pending Approvals</div>
+        </div>
+
+        <div class="vital-item">
+            <div class="vital-number {% if approved_pending_rtm > 0 %}warning{% endif %}">{{ approved_pending_rtm }}</div>
+            <div class="vital-label">Waiting for RTM Sync</div>
+        </div>
+
+        <div class="vital-item">
+            <div class="vital-number">{{ backlog_pending }}</div>
+            <div class="vital-label">Backlog Pending</div>
+        </div>
+    </div>
+
+    <div class="vital-row">
+        <div class="vital-item">
+            <div class="vital-number success">{{ backlog_processed }}</div>
+            <div class="vital-label">Backlog Processed</div>
+        </div>
+
+        {% if backlog_failed > 0 %}
+        <div class="vital-item">
+            <div class="vital-number error">{{ backlog_failed }}</div>
+            <div class="vital-label">Backlog Failed</div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Service Cards -->
+<div class="dashboard-grid">
+    <!-- Approvals -->
+    <a href="/approvals" class="card">
+        <h2>📋 Approvals</h2>
+        <p>Review and approve pending captures</p>
+        <div class="stat">{{ pending_approvals }}</div>
+        <div class="stat-label">waiting for decision</div>
+    </a>
+
+    <!-- Audit Log -->
+    <a href="/audit-log" class="card">
+        <h2>📊 Audit Log</h2>
+        <p>Complete history with search & filter</p>
+        <p style="color: #999; font-size: 0.85em; margin-top: 20px;">
+            View all captures, sources, and RTM sync status
+        </p>
+    </a>
+
+    <!-- Backlog -->
+    <a href="/backlog" class="card">
+        <h2>📦 Backlog</h2>
+        <p>Bulk import and progressive clarification</p>
+        <div class="stat">{{ backlog_pending }}</div>
+        <div class="stat-label">items pending processing</div>
+    </a>
+
+    <!-- Health Check -->
+    <a href="/health" class="card">
+        <h2>🏥 System Health</h2>
+        <p>Component status and diagnostics</p>
+        <p style="color: #999; font-size: 0.85em; margin-top: 20px;">
+            Database, RTM, Email, LLM status
+        </p>
+    </a>
+
+    <!-- Highlights -->
+    <a href="/approvals" class="card">
+        <h2>✨ Daily Highlights</h2>
+        <p>Lonely actions selected for today</p>
+        <p style="color: #999; font-size: 0.85em; margin-top: 20px;">
+            Regenerate highlights from approvals page
+        </p>
+    </a>
+
+    <!-- Metrics -->
+    <a href="/metrics" class="card">
+        <h2>📈 Metrics</h2>
+        <p>System performance and statistics</p>
+        <p style="color: #999; font-size: 0.85em; margin-top: 20px;">
+            JSON metrics for monitoring dashboards
+        </p>
+    </a>
+</div>
+
+{% endblock %}

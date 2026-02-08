@@ -53,6 +53,42 @@ def initialize_database() -> None:
     daily_highlights_scheduler.start_scheduler()
 
 
+@app.get("/", response_class=HTMLResponse)
+def dashboard(request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
+    """
+    Main dashboard with links and vital statistics.
+    """
+    from . import backlog_processor
+
+    # Get vital stats
+    pending_approvals = (
+        db.query(models.Capture)
+        .filter(models.Capture.decision_status == "proposed")
+        .count()
+    )
+    approved_pending_rtm = (
+        db.query(models.Capture)
+        .filter(
+            models.Capture.decision_status == "approved",
+            models.Capture.commit_status != "committed",
+        )
+        .count()
+    )
+    backlog_status = backlog_processor.get_backlog_status(db)
+
+    return templates.TemplateResponse(
+        "dashboard.html",
+        {
+            "request": request,
+            "pending_approvals": pending_approvals,
+            "approved_pending_rtm": approved_pending_rtm,
+            "backlog_pending": backlog_status["pending"],
+            "backlog_processed": backlog_status["processed"],
+            "backlog_failed": backlog_status["failed"],
+        },
+    )
+
+
 @app.get("/health")
 def health_check(db: Session = Depends(get_db)) -> dict:
     """
