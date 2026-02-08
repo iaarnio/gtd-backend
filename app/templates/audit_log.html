@@ -37,10 +37,11 @@
     {% for capture in captures %}
         <tr>
             <td><strong>#{{ capture.id }}</strong></td>
+            <td class="small">{{ capture.created_at.strftime('%Y-%m-%d %H:%M:%S') }}</td>
             <td class="small">
-                <div>{{ capture.created_at.strftime('%Y-%m-%d %H:%M:%S') }}</div>
+                <div>{{ capture.source }}</div>
                 {% if capture.email_id %}
-                    <div style="color: #999; font-size: 0.8rem;">
+                    <div style="color: #999; font-size: 0.8rem; margin-top: 0.2rem;">
                         {% if capture.email_link %}
                             <a href="{{ capture.email_link }}" target="_blank" class="email-link">{{ capture.email_id[:20] }}...</a>
                         {% else %}
@@ -49,7 +50,6 @@
                     </div>
                 {% endif %}
             </td>
-            <td><span class="small">{{ capture.source }}</span></td>
             <td><span class="small"><code>{{ capture.raw_text }}</code></span></td>
             <td><span class="small">{{ capture.clarified_text }}</span></td>
             <td>
