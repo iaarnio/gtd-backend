@@ -109,9 +109,9 @@ class Config:
     # ============================================================================
     # POLLING INTERVALS (seconds)
     # ============================================================================
-    EMAIL_POLL_INTERVAL: int = int(os.environ.get("EMAIL_POLL_INTERVAL", "60"))
+    EMAIL_POLL_INTERVAL: int = int(os.environ.get("EMAIL_POLL_INTERVAL", "3600"))
     """
-    Interval for checking IMAP for new emails in seconds.
+    Interval for checking IMAP for new emails in seconds (default: 1 hour).
     Environment: EMAIL_POLL_INTERVAL
     """
 
@@ -151,8 +151,8 @@ class Config:
     SYSTEM_LABEL: str = "highlight-today"
     """System-owned transient highlight label in RTM."""
 
-    HIGHLIGHTS_RUN_HOUR: int = 23
-    """Hour (0-23 UTC) to run daily highlights job."""
+    HIGHLIGHTS_RUN_HOUR: int = 2
+    """Hour (0-23 UTC) to run daily highlights job (default: 02:00 UTC)."""
 
     HIGHLIGHTS_RUN_MINUTE: int = 0
     """Minute (0-59) to run daily highlights job."""
