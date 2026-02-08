@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Request, status
@@ -201,7 +202,6 @@ def metrics(db: Session = Depends(get_db)) -> dict:
     )
 
     # Recent failures (last 24 hours)
-    from datetime import timedelta
     one_day_ago = datetime.utcnow() - timedelta(days=1)
 
     failed_clarifications = (
@@ -501,8 +501,6 @@ async def approve_capture(
     Mark a capture as approved. This transition is irreversible.
     Accepts form fields to save clarification before approving.
     """
-    from datetime import datetime
-
     capture = db.get(models.Capture, capture_id)
     if capture is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Capture not found")
@@ -564,8 +562,6 @@ async def reject_capture(
     Mark a capture as rejected. This transition is irreversible.
     Accepts form fields to save clarification before rejecting.
     """
-    from datetime import datetime
-
     capture = db.get(models.Capture, capture_id)
     if capture is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Capture not found")
