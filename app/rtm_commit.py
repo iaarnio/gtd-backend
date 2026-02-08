@@ -348,8 +348,14 @@ def _ensure_anchor_for_pending_approvals(db) -> None:
     }
 
     try:
-        timeline = create_timeline()
-        ids = add_task(timeline=timeline, name=smart_add)
+        # Get auth token from DB
+        from .rtm_auth import get_rtm_auth
+        auth_record = get_rtm_auth()
+        if not auth_record or not auth_record.auth_token:
+            raise RuntimeError("No RTM auth token available (user must authenticate)")
+
+        timeline = create_timeline(auth_token=auth_record.auth_token)
+        ids = add_task(timeline=timeline, name=smart_add, auth_token=auth_record.auth_token)
     except Exception as exc:
         # Unknown state: we do not retry automatically to avoid
         # potential duplicates. This remains visible in the DB.
