@@ -89,8 +89,8 @@ def dashboard(request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
     )
 
 
-@app.get("/health")
-def health_check(db: Session = Depends(get_db)) -> dict:
+@app.get("/health", response_class=HTMLResponse)
+def health_check(request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
     """
     Enhanced health endpoint with per-component status checks.
 
@@ -173,11 +173,14 @@ def health_check(db: Session = Depends(get_db)) -> dict:
             "message": "LLM clarification is not configured (optional)"
         }
 
-    return health_status
+    return templates.TemplateResponse(
+        "health.html",
+        {"request": request, "health": health_status},
+    )
 
 
-@app.get("/metrics")
-def metrics(db: Session = Depends(get_db)) -> dict:
+@app.get("/metrics", response_class=HTMLResponse)
+def metrics(request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
     """
     Metrics endpoint for Grafana and monitoring systems.
 
@@ -263,7 +266,10 @@ def metrics(db: Session = Depends(get_db)) -> dict:
     metrics_data["system"]["running"] = True
     metrics_data["system"]["version"] = "0.1.0"
 
-    return metrics_data
+    return templates.TemplateResponse(
+        "metrics.html",
+        {"request": request, "metrics": metrics_data},
+    )
 
 
 @app.get("/audit-log", response_class=HTMLResponse)
@@ -895,15 +901,18 @@ async def backlog_import(request: Request, db: Session = Depends(get_db)) -> dic
     return result
 
 
-@app.get("/backlog")
-def backlog_status(db: Session = Depends(get_db)) -> dict:
+@app.get("/backlog", response_class=HTMLResponse)
+def backlog_status(request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
     """
-    Get backlog status overview.
+    Get backlog status overview with visualization.
 
     Returns counts for pending, processed, failed items.
     """
     from . import backlog_processor
 
     status = backlog_processor.get_backlog_status(db)
-    return status
+    return templates.TemplateResponse(
+        "backlog.html",
+        {"request": request, "backlog": status},
+    )
 

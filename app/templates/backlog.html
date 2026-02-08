@@ -1,0 +1,219 @@
+{% extends "base.html" %}
+
+{% block title %}Backlog{% endblock %}
+
+{% block content %}
+<h2>📦 Backlog Status</h2>
+
+<style>
+    .backlog-container {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+        gap: 20px;
+        margin-top: 20px;
+    }
+
+    .status-card {
+        border-radius: 8px;
+        padding: 25px;
+        text-align: center;
+        transition: all 0.2s;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+
+    .status-card:hover {
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        transform: translateY(-2px);
+    }
+
+    .status-card h3 {
+        margin: 0 0 10px 0;
+        font-size: 0.9em;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        color: #666;
+        font-weight: 600;
+    }
+
+    .status-number {
+        font-size: 3.5em;
+        font-weight: bold;
+        margin: 15px 0;
+        line-height: 1;
+    }
+
+    .status-pending {
+        background: linear-gradient(135deg, #fff3e0 0%, #ffe0b2 100%);
+        border: 2px solid #ff9800;
+    }
+
+    .status-pending .status-number {
+        color: #ff9800;
+    }
+
+    .status-processed {
+        background: linear-gradient(135deg, #f1f8e9 0%, #c8e6c9 100%);
+        border: 2px solid #4caf50;
+    }
+
+    .status-processed .status-number {
+        color: #4caf50;
+    }
+
+    .status-failed {
+        background: linear-gradient(135deg, #ffebee 0%, #ffcdd2 100%);
+        border: 2px solid #f44336;
+    }
+
+    .status-failed .status-number {
+        color: #f44336;
+    }
+
+    .status-limit {
+        background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%);
+        border: 2px solid #2196f3;
+    }
+
+    .status-limit .status-number {
+        color: #2196f3;
+    }
+
+    .info-section {
+        background: #f5f5f5;
+        border: 1px solid #ddd;
+        border-radius: 8px;
+        padding: 20px;
+        margin-top: 30px;
+    }
+
+    .info-section h3 {
+        margin-top: 0;
+        color: #333;
+    }
+
+    .info-section p {
+        margin: 10px 0;
+        color: #666;
+        line-height: 1.6;
+    }
+
+    .import-section {
+        background: #f0f8ff;
+        border: 2px dashed #2196f3;
+        border-radius: 8px;
+        padding: 20px;
+        margin-top: 30px;
+    }
+
+    .import-section h3 {
+        margin-top: 0;
+        color: #2196f3;
+    }
+
+    .progress-bar {
+        width: 100%;
+        height: 8px;
+        background: #ddd;
+        border-radius: 4px;
+        margin: 15px 0;
+        overflow: hidden;
+    }
+
+    .progress-fill {
+        height: 100%;
+        background: #4caf50;
+        transition: width 0.3s;
+    }
+
+    code {
+        background: #fff;
+        border: 1px solid #ddd;
+        padding: 2px 6px;
+        border-radius: 3px;
+        font-size: 0.9em;
+    }
+</style>
+
+<!-- Status Overview -->
+<div class="backlog-container">
+    <div class="status-card status-pending">
+        <h3>⏳ Pending</h3>
+        <div class="status-number">{{ backlog.pending }}</div>
+        <p style="color: #ff9800; font-size: 0.9em;">Items waiting to be processed</p>
+    </div>
+
+    <div class="status-card status-processed">
+        <h3>✅ Processed</h3>
+        <div class="status-number">{{ backlog.processed }}</div>
+        <p style="color: #4caf50; font-size: 0.9em;">Successfully clarified items</p>
+    </div>
+
+    {% if backlog.failed > 0 %}
+    <div class="status-card status-failed">
+        <h3>❌ Failed</h3>
+        <div class="status-number">{{ backlog.failed }}</div>
+        <p style="color: #f44336; font-size: 0.9em;">Max attempts exceeded</p>
+    </div>
+    {% endif %}
+
+    <div class="status-card status-limit">
+        <h3>📅 Daily Limit</h3>
+        <div class="status-number">{{ backlog.daily_limit }}</div>
+        <p style="color: #2196f3; font-size: 0.9em;">Items processed per day</p>
+    </div>
+</div>
+
+<!-- Progress Visualization -->
+{% if backlog.pending > 0 or backlog.processed > 0 %}
+<div class="info-section">
+    <h3>📊 Backlog Digestion Progress</h3>
+    <div style="margin: 20px 0;">
+        <p style="margin: 5px 0; font-weight: bold;">
+            {{ backlog.processed }} processed out of {{ backlog.processed + backlog.pending }} total
+        </p>
+        <div class="progress-bar">
+            {% set total = backlog.pending + backlog.processed %}
+            {% set percentage = (backlog.processed / total * 100)|int if total > 0 else 0 %}
+            <div class="progress-fill" style="width: {{ percentage }}%"></div>
+        </div>
+        <p style="font-size: 0.9em; color: #999;">{{ percentage }}% complete</p>
+    </div>
+</div>
+{% endif %}
+
+<!-- How It Works -->
+<div class="info-section">
+    <h3>🔄 How Backlog Works</h3>
+    <p>
+        The backlog is a slow digestion queue for your existing tasks. Instead of processing all items at once,
+        the system clarifies <strong>up to {{ backlog.daily_limit }} items per day</strong> at 03:00 UTC.
+    </p>
+    <p>
+        Each item goes through:
+    </p>
+    <ol style="color: #666; padding-left: 20px;">
+        <li><strong>Clarification:</strong> AI analyzes the task</li>
+        <li><strong>Approval:</strong> You review and approve in the approvals page</li>
+        <li><strong>RTM Sync:</strong> Approved items sync to Remember The Milk</li>
+    </ol>
+    <p style="background: #fff9e6; padding: 10px; border-radius: 4px; border-left: 4px solid #ff9800;">
+        <strong>⏱️ Timeline:</strong> With 200 pending items and a {{ backlog.daily_limit }}/day limit,
+        you'll process all items in about <strong>40 days</strong>. No rush!
+    </p>
+</div>
+
+<!-- Import Section -->
+<div class="import-section">
+    <h3>📥 Import New Tasks</h3>
+    <p>
+        To add more tasks to the backlog, use the API endpoint:
+    </p>
+    <p style="background: white; padding: 10px; border-radius: 4px; border: 1px solid #2196f3; font-family: monospace; font-size: 0.9em;">
+        POST /backlog/import
+    </p>
+    <p style="font-size: 0.9em; color: #666;">
+        Send plain text with one task per line. The system will queue them for gradual processing.
+    </p>
+</div>
+
+{% endblock %}

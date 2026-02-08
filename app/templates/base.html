@@ -25,12 +25,11 @@
     </style>
 </head>
 <body>
-<header>
-    <h1>GTD Backend</h1>
-    <nav>
-        <a href="/approvals">Pending approvals</a>
-        <a href="/audit-log">Audit log</a>
-    </nav>
+<header style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem; padding-bottom: 1rem; border-bottom: 1px solid #ddd;">
+    <div>
+        <h1 style="margin: 0;">GTD Backend</h1>
+    </div>
+    <a href="/" style="font-size: 1.8em; text-decoration: none; color: #0066cc; transition: color 0.2s;" title="Go to dashboard">🏠</a>
 </header>
 
 {% block content %}{% endblock %}
