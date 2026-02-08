@@ -472,14 +472,13 @@ def run_clarification_loop() -> None:
     Background loop that periodically attempts to clarify unprocessed
     captures.
     """
-    logger.info("Clarification loop started, polling every 30 seconds")
+    logger.info(f"Clarification loop started, polling every {POLL_INTERVAL_SECONDS} seconds")
     poll_count = 0
     while True:
         try:
             poll_count += 1
             logger.info(f"Clarification poll #{poll_count} starting...")
             _poll_once()
-            logger.info(f"Clarification poll #{poll_count} complete")
         except Exception as e:
             # Failures should not crash the loop; they will be surfaced
             # by logs in a later hardening step.

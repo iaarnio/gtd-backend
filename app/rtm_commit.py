@@ -427,7 +427,7 @@ def _poll_once() -> None:
 
 
 def run_commit_loop() -> None:
-    logger.info("RTM commit loop started, polling every 30 seconds")
+    logger.info(f"RTM commit loop started, polling every {POLL_INTERVAL_SECONDS} seconds")
     while True:
         try:
             _poll_once()

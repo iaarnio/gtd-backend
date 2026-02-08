@@ -115,13 +115,13 @@ class Config:
     Environment: EMAIL_POLL_INTERVAL
     """
 
-    CLARIFY_POLL_INTERVAL: int = int(os.environ.get("CLARIFY_POLL_INTERVAL", "30"))
+    CLARIFY_POLL_INTERVAL: int = int(os.environ.get("CLARIFY_POLL_INTERVAL", "900"))
     """
-    Interval for checking for captures that need clarification in seconds.
+    Interval for checking for captures that need clarification in seconds (default: 15 minutes).
     Environment: CLARIFY_POLL_INTERVAL
     """
 
-    COMMIT_POLL_INTERVAL: int = int(os.environ.get("COMMIT_POLL_INTERVAL", "30"))
+    COMMIT_POLL_INTERVAL: int = int(os.environ.get("COMMIT_POLL_INTERVAL", "900"))
     """
     Interval for checking for captures that need RTM commit in seconds.
     Environment: COMMIT_POLL_INTERVAL
