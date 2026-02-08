@@ -832,3 +832,42 @@ def regenerate_highlights(db: Session = Depends(get_db)) -> dict:
     result = daily_highlights.run_daily_highlights(db)
     return result
 
+
+@app.post("/backlog/import")
+async def backlog_import(request: Request, db: Session = Depends(get_db)) -> dict:
+    """
+    Bulk import tasks into backlog (one per line).
+
+    Accepts plain text, one task per line. Whitespace-only lines ignored.
+    Tasks are queued for slow clarification (e.g., 5 per day).
+
+    Returns:
+        dict with imported count and skipped count
+    """
+    from . import backlog_processor
+
+    try:
+        body = await request.body()
+        text = body.decode("utf-8")
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Failed to read request body: {e}",
+        )
+
+    result = backlog_processor.bulk_import_backlog(db, text)
+    return result
+
+
+@app.get("/backlog")
+def backlog_status(db: Session = Depends(get_db)) -> dict:
+    """
+    Get backlog status overview.
+
+    Returns counts for pending, processed, failed items.
+    """
+    from . import backlog_processor
+
+    status = backlog_processor.get_backlog_status(db)
+    return status
+

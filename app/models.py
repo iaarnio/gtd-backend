@@ -209,3 +209,49 @@ class RtmTask(Base):
     created_at_db = Column(DateTime, nullable=False, default=datetime.utcnow)
 
 
+class BacklogItem(Base):
+    """
+    Batch import backlog for slow digestion of existing tasks.
+
+    This is a queue of unprocessed tasks waiting to be clarified at a controlled rate
+    (e.g., 5 per day). Tasks are processed FIFO into the same clarify→approve→commit
+    pipeline as email captures.
+
+    Status flow: pending → processing → processed (or failed)
+    """
+
+    __tablename__ = "backlog_items"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    # Raw task text (exactly one task line, as provided by user)
+    raw_text = Column(Text, nullable=False)
+
+    # Source identifier
+    source = Column(String(50), nullable=False, default="rtm-export")
+
+    # Status: pending → processing → processed (or failed)
+    status = Column(
+        String(20),
+        nullable=False,
+        default="pending",
+        index=True,
+        # Check constraint: only valid statuses
+    )
+
+    # When imported
+    imported_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+
+    # When actually processed (moved to clarify)
+    processed_at = Column(DateTime, nullable=True)
+
+    # Tracking clarification attempts
+    clarify_attempts = Column(Integer, nullable=False, default=0)
+
+    # Last error message (if failed)
+    last_error = Column(Text, nullable=True)
+
+    # Timestamps
+    created_at_db = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
