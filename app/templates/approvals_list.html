@@ -17,6 +17,48 @@
     {% endif %}
 </div>
 
+<!-- Daily Highlights -->
+<div style="margin-bottom: 20px;">
+    <button id="regenerate-highlights-btn" style="padding: 8px 16px; background: #9c27b0; color: white; border: none; border-radius: 3px; cursor: pointer; font-weight: bold;">
+        ✨ Regenerate Daily Highlights
+    </button>
+    <div id="highlights-status" style="margin-top: 10px; display: none; padding: 10px; border-radius: 3px;"></div>
+</div>
+
+<script>
+document.getElementById('regenerate-highlights-btn').addEventListener('click', async function() {
+    const btn = this;
+    const statusDiv = document.getElementById('highlights-status');
+
+    btn.disabled = true;
+    statusDiv.style.display = 'block';
+    statusDiv.textContent = 'Regenerating highlights...';
+    statusDiv.style.background = '#e8f5e9';
+    statusDiv.style.color = '#2e7d32';
+
+    try {
+        const response = await fetch('/highlights/regenerate', { method: 'POST' });
+        const result = await response.json();
+
+        if (result.status === 'ok') {
+            statusDiv.textContent = `✓ Regenerated highlights (${result.selected_count} tasks selected)`;
+            statusDiv.style.background = '#d4edda';
+            statusDiv.style.color = '#155724';
+        } else {
+            statusDiv.textContent = `Error: ${result.error || 'Failed to regenerate'}`;
+            statusDiv.style.background = '#f8d7da';
+            statusDiv.style.color = '#721c24';
+        }
+    } catch (error) {
+        statusDiv.textContent = `Error: ${error.message}`;
+        statusDiv.style.background = '#f8d7da';
+        statusDiv.style.color = '#721c24';
+    } finally {
+        btn.disabled = false;
+    }
+});
+</script>
+
 {% if captures %}
 <table>
     <thead>

@@ -48,6 +48,9 @@ def initialize_database() -> None:
     clarification.start_background_clarifier()
     # Start RTM commit loop. If RTM is not configured this becomes a no-op.
     rtm_commit.start_background_committer()
+    # Start daily highlights scheduler. Runs at configured time each day.
+    from . import daily_highlights_scheduler
+    daily_highlights_scheduler.start_scheduler()
 
 
 @app.get("/health")
@@ -806,4 +809,26 @@ async def rtm_auth_finish(request: Request, db: Session = Depends(get_db)) -> Re
         return RedirectResponse(url="/approvals?auth=success", status_code=status.HTTP_303_SEE_OTHER)
     except Exception as e:
         return RedirectResponse(url=f"/approvals?auth=failed&error={str(e)}", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@app.post("/highlights/regenerate")
+def regenerate_highlights(db: Session = Depends(get_db)) -> dict:
+    """
+    Manually regenerate daily highlights.
+
+    Clears yesterday's system highlights and selects new lonely actions.
+    This can be called at any time, typically via UI button.
+
+    Returns:
+        dict with status, selected_count, error (if any)
+    """
+    from . import daily_highlights
+
+    logger.info(
+        "Manual highlights regeneration requested",
+        extra={"component": "highlights", "operation": "manual_regenerate"},
+    )
+
+    result = daily_highlights.run_daily_highlights(db)
+    return result
 

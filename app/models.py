@@ -164,3 +164,48 @@ class RtmAuth(Base):
     last_checked_at = Column(DateTime, nullable=True)
 
 
+class RtmTask(Base):
+    """
+    Cache of RTM tasks for daily highlight system.
+
+    Tracks:
+    - RTM task metadata (ID, name, created_at)
+    - Project association (project_id if task is part of project)
+    - Completion status (rtm_completed)
+    - Tags (cached snapshot)
+    - Suggestion tracking (times_suggested, last_suggested_at)
+    """
+
+    __tablename__ = "rtm_tasks"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    # RTM task identifiers
+    rtm_task_id = Column(String(50), unique=True, nullable=False, index=True)
+    rtm_taskseries_id = Column(String(50), nullable=False)
+    rtm_list_id = Column(String(50), nullable=False)
+
+    # Task metadata
+    name = Column(Text, nullable=False)
+    created_at = Column(DateTime, nullable=False)
+
+    # Project association (NULL = lonely action = eligible for highlight)
+    rtm_project_id = Column(String(50), nullable=True, index=True)
+
+    # Completion status
+    rtm_completed = Column(Boolean, nullable=False, default=False, index=True)
+
+    # Cached tags as JSON array (e.g., ["#na", "work"])
+    tags = Column(Text, nullable=True)
+
+    # Suggestion tracking for anti-nag rule
+    times_suggested = Column(Integer, nullable=False, default=0)
+    last_suggested_at = Column(DateTime, nullable=True, index=True)
+
+    # When this record was last synced with RTM
+    last_synced_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    # Timestamps
+    created_at_db = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+

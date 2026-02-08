@@ -143,6 +143,21 @@ class Config:
     """
 
     # ============================================================================
+    # DAILY HIGHLIGHTS CONFIGURATION
+    # ============================================================================
+    HIGHLIGHT_LABEL: str = "highlight"
+    """User-owned manual highlight label in RTM."""
+
+    SYSTEM_LABEL: str = "highlight-today"
+    """System-owned transient highlight label in RTM."""
+
+    HIGHLIGHTS_RUN_HOUR: int = 23
+    """Hour (0-23 UTC) to run daily highlights job."""
+
+    HIGHLIGHTS_RUN_MINUTE: int = 0
+    """Minute (0-59) to run daily highlights job."""
+
+    # ============================================================================
     # HELPER PROPERTIES
     # ============================================================================
     @property
