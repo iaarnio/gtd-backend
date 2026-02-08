@@ -3,6 +3,7 @@ import logging
 import os
 import threading
 import time
+from datetime import datetime
 from typing import Any, Dict, Optional
 
 import requests
@@ -348,8 +349,6 @@ def _poll_once() -> None:
 
     db = SessionLocal()
     try:
-        from datetime import datetime
-
         now = datetime.utcnow()
 
         # Select captures that need clarification:
