@@ -93,8 +93,8 @@ document.getElementById('regenerate-highlights-btn').addEventListener('click', a
                 {% endif %}
             </td>
             <td data-label="Confidence">
-                {% if clar and clar['confidence_score'] is not none %}
-                    {{ "%.2f"|format(clar['confidence_score']) }}
+                {% if clar and clar.get('confidence_score') is not none %}
+                    {{ "%.2f"|format(clar.get('confidence_score')) }}
                 {% else %}
                     n/a
                 {% endif %}

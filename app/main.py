@@ -441,7 +441,7 @@ def approvals_list(request: Request, db: Session = Depends(get_db)) -> HTMLRespo
             models.Capture.decision_status == "approved",
             models.Capture.commit_status != "committed"
         )
-        .order_by(models.Capture.created_at.asc())
+        .order_by(models.Capture.created_at.desc())
         .all()
     )
 
