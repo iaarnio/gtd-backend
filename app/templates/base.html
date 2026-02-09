@@ -31,49 +31,13 @@
             color: #2196f3;
             font-weight: bold;
         }
+        @media (max-width: 768px) {
+            body {
+                margin: 1rem;
+            }
+        }
     </style>
     <style>
-        /* Desktop: ei muutoksia */
-        @media (max-width: 768px) {
-
-            table,
-            thead,
-            tbody,
-            th,
-            td,
-            tr {
-                display: block;
-            }
-
-            thead {
-                display: none;
-            }
-
-            tr {
-                border: 1px solid #ddd;
-                border-radius: 8px;
-                margin-bottom: 15px;
-                padding: 12px;
-                background: #fff;
-                box-shadow: 0 2px 6px rgba(0,0,0,0.05);
-            }
-
-            td {
-                display: flex;
-                justify-content: space-between;
-                align-items: flex-start;
-                padding: 6px 0;
-                border: none;
-            }
-
-            td::before {
-                content: attr(data-label);
-                font-weight: 600;
-                color: #666;
-                margin-right: 10px;
-                flex: 0 0 35%;
-                text-align: left;
-            }
 
             td[data-label="Summary"] {
                 flex-direction: column;
@@ -97,6 +61,62 @@
                 font-weight: 600;
             }
         }
+        .audit-cards {
+            display: none;
+        }
+
+        @media (max-width: 768px) {
+            .audit-table {
+                display: none;
+            }
+            .audit-cards {
+                display: block;
+            }
+        }
+.audit-card {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+
+    background: white;
+    border: 1px solid #ddd;
+    border-radius: 10px;
+    padding: 14px;
+    margin-bottom: 12px;
+}
+
+.audit-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.audit-meta {
+    font-size: 0.8rem;
+    color: #666;
+}
+
+.audit-raw {
+    font-family: monospace;
+    font-size: 0.85rem;
+    background: #f5f5f5;
+    padding: 8px;
+    border-radius: 6px;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.audit-clarified {
+    font-size: 0.9rem;
+}
+
+.audit-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 6px;
+}
+
     </style>
 
 </head>

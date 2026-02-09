@@ -67,62 +67,88 @@
     tr:hover { background-color: #f9f9f9; }
 </style>
 
-<table>
-    <thead>
-        <tr>
-            <th>ID</th>
-            <th>Created</th>
-            <th>Source</th>
-            <th>Raw Text (first 60 chars)</th>
-            <th>Clarified</th>
-            <th>Decision</th>
-            <th>RTM Status</th>
-            <th>Actions</th>
-        </tr>
-    </thead>
-    <tbody>
-    {% for capture in captures %}
-        <tr>
-            <td><strong>#{{ capture.id }}</strong></td>
-            <td class="small">{{ capture.created_at.strftime('%Y-%m-%d %H:%M:%S') }}</td>
-            <td class="small">
-                <div>{{ capture.source }}</div>
-                {% if capture.email_id %}
-                    <div style="color: #999; font-size: 0.8rem; margin-top: 0.2rem;">
-                        {% if capture.email_link %}
-                            <a href="{{ capture.email_link }}" target="_blank" class="email-link">{{ capture.email_id[:20] }}...</a>
-                        {% else %}
-                            {{ capture.email_id[:20] }}...
-                        {% endif %}
-                    </div>
-                {% endif %}
-            </td>
-            <td><span class="small"><code>{{ capture.raw_text }}</code></span></td>
-            <td><span class="small">{{ capture.clarified_text }}</span></td>
-            <td>
-                <span class="badge badge-{{ capture.decision_status }}">{{ capture.decision_status }}</span>
-                {% if capture.decision_at %}
-                    <div class="small">{{ capture.decision_at.strftime('%Y-%m-%d %H:%M:%S') }}</div>
-                {% endif %}
-            </td>
-            <td>
-                <span class="badge badge-{{ capture.commit_status }}">{{ capture.commit_status }}</span>
-                {% if capture.last_commit_attempt_at %}
-                    <div class="small">{{ capture.last_commit_attempt_at.strftime('%Y-%m-%d %H:%M:%S') }}</div>
-                {% endif %}
-                {% if capture.rtm_task_id %}
-                    <div class="small">RTM: {{ capture.rtm_task_id }}</div>
-                {% endif %}
-            </td>
-            <td>
-                {% if capture.decision_status == 'rejected' %}
-                    <button type="button" class="restore-btn" data-id="{{ capture.id }}" style="padding: 0.3rem 0.6rem; background: #28a745; color: white; border: none; border-radius: 3px; cursor: pointer; font-size: 0.85rem;">Restore</button>
-                {% endif %}
-            </td>
-        </tr>
-    {% endfor %}
-    </tbody>
-</table>
+
+<!-- Desktop table -->
+<div class="audit-table">
+    <table>
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Created</th>
+                <th>Source</th>
+                <th>Raw</th>
+                <th>Clarified</th>
+                <th>Decision</th>
+                <th>RTM</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for capture in captures %}
+            <tr>
+                <td><strong>#{{ capture.id }}</strong></td>
+                <td class="small">{{ capture.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+                <td>{{ capture.source }}</td>
+                <td><code>{{ capture.raw_text[:60] }}</code></td>
+                <td>{{ capture.clarified_text }}</td>
+                <td>
+                    <span class="badge badge-{{ capture.decision_status }}">
+                        {{ capture.decision_status }}
+                    </span>
+                </td>
+                <td>
+                    <span class="badge badge-{{ capture.commit_status }}">
+                        {{ capture.commit_status }}
+                    </span>
+                </td>
+                <td>
+                    {% if capture.decision_status == 'rejected' %}
+                        <button class="restore-btn" data-id="{{ capture.id }}">Restore</button>
+                    {% endif %}
+                </td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<!-- Mobile cards -->
+<div class="audit-cards">
+{% for capture in captures %}
+    <div class="audit-card">
+        <div class="audit-card-header">
+            <strong>#{{ capture.id }}</strong>
+            <span class="badge badge-{{ capture.decision_status }}">
+                {{ capture.decision_status }}
+            </span>
+        </div>
+
+        <div class="audit-meta">
+            {{ capture.created_at.strftime('%Y-%m-%d %H:%M') }} · {{ capture.source }}
+        </div>
+
+        <div class="audit-raw">
+            {{ capture.raw_text[:120] }}
+        </div>
+
+        {% if capture.clarified_text %}
+        <div class="audit-clarified">
+            {{ capture.clarified_text }}
+        </div>
+        {% endif %}
+
+        <div class="audit-footer">
+            <span class="badge badge-{{ capture.commit_status }}">
+                {{ capture.commit_status }}
+            </span>
+
+            {% if capture.decision_status == 'rejected' %}
+                <button class="restore-btn" data-id="{{ capture.id }}">Restore</button>
+            {% endif %}
+        </div>
+    </div>
+{% endfor %}
+</div>
 
 <script>
 document.querySelectorAll('.restore-btn').forEach(btn => {
