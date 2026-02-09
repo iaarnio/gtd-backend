@@ -21,6 +21,18 @@
 {% set clar = clar_dict %}
 
 <style>
+
+@media (max-width: 768px) {
+    .approval-grid {
+        display: block;
+    }
+
+    .approval-grid > div {
+        width: 100%;
+        margin-bottom: 12px;
+    }
+}
+
 .warning-box {
     background-color: #fff3cd;
     border: 2px solid #ffc107;
@@ -39,6 +51,13 @@
     grid-template-columns: 1fr 1fr;
     gap: 20px;
     margin: 20px 0;
+}
+
+@media (max-width: 768px) {
+    .form-grid {
+        grid-template-columns: 1fr;
+        gap: 12px;
+    }
 }
 
 .form-field {
@@ -104,6 +123,33 @@
     cursor: pointer;
 }
 
+@media (max-width: 768px) {
+    .button-group {
+        position: sticky;
+        bottom: 0;
+        background: white;
+        padding: 10px;
+        border-top: 1px solid #ddd;
+        z-index: 10;
+    }
+
+    .button-group button {
+        padding: 14px;
+        font-size: 16px;
+    }
+}
+
+@media (max-width: 768px) {
+    .task-row {
+        align-items: center;
+    }
+
+    .checkbox-group label {
+        font-size: 14px;
+    }
+}
+
+
 .approve {
     background-color: #4CAF50;
     color: white;
@@ -149,7 +195,7 @@ details pre {
 
 <form method="post" action="/approvals/{{ capture.id }}/clarification">
 
-    <div class="form-grid">
+    <div class="form-grid approval-grid">
         <!-- Left column -->
         <div>
             <div class="form-field">
