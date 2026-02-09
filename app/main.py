@@ -4,7 +4,7 @@ import os
 from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
 
-from fastapi import Depends, FastAPI, HTTPException, Request, status
+from fastapi import Depends, FastAPI, HTTPException, Request, Form, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import func
@@ -17,6 +17,9 @@ from .logging_config import configure_logging, get_logger
 from .rtm import auth_get_frob, auth_get_token
 from .rtm_auth import is_rtm_auth_valid, store_rtm_auth, bootstrap_rtm_auth_from_env
 from .schemas import CaptureCreate, CaptureOut, ClarificationUpdate
+from app.backlog_processor import bulk_import_backlog, get_backlog_status
+from app.db import SessionLocal
+
 
 # Configure logging
 configure_logging(
@@ -270,6 +273,16 @@ def metrics(request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
         "metrics.html",
         {"request": request, "metrics": metrics_data},
     )
+
+@app.post("/backlog/import/ui")
+def backlog_import_ui(tasks: str = Form(...)):
+    db = SessionLocal()
+    try:
+        bulk_import_backlog(db, tasks)
+    finally:
+        db.close()
+
+    return RedirectResponse(url="/backlog", status_code=303)
 
 
 @app.get("/audit-log", response_class=HTMLResponse)
@@ -876,43 +889,24 @@ def regenerate_highlights(db: Session = Depends(get_db)) -> dict:
 
 
 @app.post("/backlog/import")
-async def backlog_import(request: Request, db: Session = Depends(get_db)) -> dict:
-    """
-    Bulk import tasks into backlog (one per line).
-
-    Accepts plain text, one task per line. Whitespace-only lines ignored.
-    Tasks are queued for slow clarification (e.g., 5 per day).
-
-    Returns:
-        dict with imported count and skipped count
-    """
-    from . import backlog_processor
-
+def backlog_import_api(text: str):
+    db = SessionLocal()
     try:
-        body = await request.body()
-        text = body.decode("utf-8")
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Failed to read request body: {e}",
-        )
+        return bulk_import_backlog(db, text)
+    finally:
+        db.close()
 
-    result = backlog_processor.bulk_import_backlog(db, text)
-    return result
 
 
 @app.get("/backlog", response_class=HTMLResponse)
-def backlog_status(request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
-    """
-    Get backlog status overview with visualization.
-
-    Returns counts for pending, processed, failed items.
-    """
-    from . import backlog_processor
-
-    status = backlog_processor.get_backlog_status(db)
-    return templates.TemplateResponse(
-        "backlog.html",
-        {"request": request, "backlog": status},
-    )
+def backlog_page(request: Request):
+    db = SessionLocal()
+    try:
+        status = get_backlog_status(db)
+        return templates.TemplateResponse(
+            "backlog.html",
+            {"request": request, "backlog": status},
+        )
+    finally:
+        db.close()
 

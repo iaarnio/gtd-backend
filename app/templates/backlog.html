@@ -205,15 +205,58 @@
 <!-- Import Section -->
 <div class="import-section">
     <h3>📥 Import New Tasks</h3>
-    <p>
-        To add more tasks to the backlog, use the API endpoint:
+
+    <p style="color: #555;">
+        Paste tasks below (one per line). They will be added to the backlog
+        and digested gradually.
     </p>
-    <p style="background: white; padding: 10px; border-radius: 4px; border: 1px solid #2196f3; font-family: monospace; font-size: 0.9em;">
-        POST /backlog/import
-    </p>
-    <p style="font-size: 0.9em; color: #666;">
-        Send plain text with one task per line. The system will queue them for gradual processing.
-    </p>
+
+    <form method="post" action="/backlog/import/ui">
+        <textarea
+            name="tasks"
+            rows="8"
+            placeholder="Buy new laptop
+Call insurance company
+Review old project notes
+Fix bike brakes"
+            style="
+                width: 100%;
+                box-sizing: border-box;
+                padding: 12px;
+                font-family: monospace;
+                font-size: 0.95em;
+                border-radius: 6px;
+                border: 1px solid #bbb;
+                resize: vertical;
+            "
+            required
+        ></textarea>
+
+        <div style="margin-top: 15px;">
+            <button
+                type="submit"
+                style="
+                    padding: 10px 18px;
+                    background: #2196f3;
+                    color: white;
+                    border: none;
+                    border-radius: 4px;
+                    cursor: pointer;
+                    font-weight: bold;
+                "
+            >
+                ➕ Add to backlog
+            </button>
+        </div>
+    </form>
+
+    {% if import_result %}
+        <div style="margin-top: 15px; padding: 10px; border-radius: 4px;
+             background: #e8f5e9; color: #2e7d32;">
+            ✓ Imported {{ import_result.added }} tasks into backlog
+        </div>
+    {% endif %}
 </div>
+
 
 {% endblock %}
