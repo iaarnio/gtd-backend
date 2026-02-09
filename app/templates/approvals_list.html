@@ -5,6 +5,101 @@
 {% block content %}
 <h2>Pending approvals</h2>
 
+<style>
+/* Approvals-only mobile adjustments */
+@media (max-width: 768px) {
+    .approvals-table thead {
+        display: none;
+    }
+
+    .approvals-table tr {
+        display: block;
+        border: 1px solid #ddd;
+        border-radius: 8px;
+        margin-bottom: 12px;
+        padding: 10px;
+        background: #fff;
+    }
+
+    .approvals-table td {
+        display: flex;
+        justify-content: space-between;
+        gap: 10px;
+        border: none;
+        padding: 6px 0;
+    }
+
+    .approvals-table td::before {
+        content: attr(data-label);
+        font-weight: 600;
+        color: #666;
+        flex: 0 0 35%;
+    }
+
+    .approvals-table td[data-label="Summary"] {
+        flex-direction: column;
+    }
+}
+</style>
+<style>
+/* visibility */
+.approvals-cards {
+    display: none;
+}
+
+@media (max-width: 768px) {
+    .approvals-table {
+        display: none;
+    }
+    .approvals-cards {
+        display: block;
+    }
+}
+
+/* card styling */
+.approval-card {
+    background: #fff;
+    border: 1px solid #ddd;
+    border-radius: 10px;
+    padding: 14px;
+    margin-bottom: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.approval-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.approval-meta {
+    font-size: 0.8rem;
+    color: #666;
+}
+
+.approval-summary {
+    font-size: 0.95rem;
+}
+
+.approval-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.open-btn {
+    padding: 6px 12px;
+    background: #2196f3;
+    color: white;
+    border-radius: 6px;
+    text-decoration: none;
+    font-weight: 600;
+}
+</style>
+
+
 <!-- RTM Auth Status Banner -->
 <div style="margin-bottom: 20px; padding: 15px; border-radius: 4px; {% if rtm_auth_valid %}background-color: #d4edda; border: 1px solid #c3e6cb; color: #155724;{% else %}background-color: #f8d7da; border: 1px solid #f5c6cb; color: #721c24;{% endif %}">
     {% if rtm_auth_valid %}
@@ -60,7 +155,8 @@ document.getElementById('regenerate-highlights-btn').addEventListener('click', a
 </script>
 
 {% if captures %}
-<table>
+<div class="approvals-table">
+    <table>
     <thead>
     <tr>
         <th>ID</th>
@@ -111,6 +207,45 @@ document.getElementById('regenerate-highlights-btn').addEventListener('click', a
     {% endfor %}
     </tbody>
 </table>
+</div>
+<div class="approvals-cards">
+{% for c in captures %}
+    {% set clar = c.clar_dict %}
+    <div class="approval-card">
+        <div class="approval-card-header">
+            <strong>#{{ c.id }}</strong>
+            <span class="status {{ c.decision_status }}">
+                {{ c.status_label }}
+            </span>
+        </div>
+
+        <div class="approval-meta">
+            {{ c.created_at }} · {{ c.source }}
+        </div>
+
+        <div class="approval-summary">
+            {% if clar %}
+                {{ clar.get('clarified_text') or clar.get('next_action') or 'No clarified text' }}
+            {% else %}
+                <em>No clarification yet</em>
+            {% endif %}
+        </div>
+
+        <div class="approval-footer">
+            <span class="confidence">
+                {% if clar and clar.get('confidence_score') is not none %}
+                    {{ "%.2f"|format(clar.get('confidence_score')) }}
+                {% else %}
+                    n/a
+                {% endif %}
+            </span>
+
+            <a class="open-btn" href="/approvals/{{ c.id }}">Open</a>
+        </div>
+    </div>
+{% endfor %}
+</div>
+
 {% else %}
 <p>No captures awaiting action. All approvals have been completed.</p>
 {% endif %}

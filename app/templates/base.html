@@ -1,122 +1,34 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+    {% block extra_css %}{% endblock %}
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{% block title %}GTD Backend{% endblock %}</title>
     <style>
-        body { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 2rem; line-height: 1.4; }
-        header { margin-bottom: 1.5rem; }
-        nav a { margin-right: 1rem; }
-        table { border-collapse: collapse; width: 100%; margin-top: 1rem; }
-        th, td { border: 1px solid #ddd; padding: 0.5rem; vertical-align: top; }
-        th { background: #f5f5f5; text-align: left; }
-        code { background: #f5f5f5; padding: 0.1rem 0.3rem; border-radius: 3px; }
-        .badge { display: inline-block; padding: 0.1rem 0.4rem; border-radius: 3px; font-size: 0.75rem; text-transform: uppercase; }
-        .badge-proposed { background: #fff3cd; color: #856404; }
-        .badge-approved { background: #d4edda; color: #155724; }
-        .badge-rejected { background: #f8d7da; color: #721c24; }
-        .confidence { font-weight: bold; }
-        .actions { margin-top: 1rem; display: flex; gap: 0.5rem; }
-        .actions form { display: inline; }
-        button { padding: 0.4rem 0.8rem; cursor: pointer; }
-        button.approve { background: #28a745; color: white; border: none; }
-        button.reject { background: #dc3545; color: white; border: none; }
-        textarea { width: 100%; min-height: 10rem; font-family: monospace; font-size: 0.85rem; }
-        .status.proposed {
-            color: #ff9800;
-            font-weight: bold;
-        }
-        .status.approved {
-            color: #2196f3;
-            font-weight: bold;
-        }
-        @media (max-width: 768px) {
-            body {
-                margin: 1rem;
-            }
-        }
-    </style>
-    <style>
+       body {
+    font-family: system-ui;
+    margin: 2rem;
+}
 
-            td[data-label="Summary"] {
-                flex-direction: column;
-            }
 
-            td[data-label="Summary"]::before {
-                margin-bottom: 4px;
-            }
+table {
+    border-collapse: collapse;
+    width: 100%;
+    margin-top: 1rem;
+}
 
-            td[data-label="Action"] {
-                justify-content: flex-end;
-                margin-top: 10px;
-            }
-
-            td[data-label="Action"] a {
-                padding: 8px 14px;
-                background: #2196f3;
-                color: white;
-                border-radius: 4px;
-                text-decoration: none;
-                font-weight: 600;
-            }
-        }
-        .audit-cards {
-            display: none;
-        }
-
-        @media (max-width: 768px) {
-            .audit-table {
-                display: none;
-            }
-            .audit-cards {
-                display: block;
-            }
-        }
-.audit-card {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-
-    background: white;
+th, td {
     border: 1px solid #ddd;
-    border-radius: 10px;
-    padding: 14px;
-    margin-bottom: 12px;
+    padding: 0.5rem;
+    vertical-align: top;
 }
 
-.audit-card-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
+@media (max-width: 768px) {
+    body {
+        margin: 1rem;
+    }
 }
-
-.audit-meta {
-    font-size: 0.8rem;
-    color: #666;
-}
-
-.audit-raw {
-    font-family: monospace;
-    font-size: 0.85rem;
-    background: #f5f5f5;
-    padding: 8px;
-    border-radius: 6px;
-    white-space: pre-wrap;
-    word-break: break-word;
-}
-
-.audit-clarified {
-    font-size: 0.9rem;
-}
-
-.audit-footer {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-top: 6px;
-}
-
     </style>
 
 </head>
