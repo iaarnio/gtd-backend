@@ -76,10 +76,10 @@ document.getElementById('regenerate-highlights-btn').addEventListener('click', a
     {% for c in captures %}
         {% set clar = c.clar_dict %}
         <tr>
-            <td>{{ c.id }}</td>
-            <td>{{ c.created_at }}</td>
-            <td>{{ c.source }}</td>
-            <td>
+            <td data-label="ID">{{ c.id }}</td>
+            <td data-label="Created">{{ c.created_at }}</td>
+            <td data-label="Source">{{ c.source }}</td>
+            <td data-label="Summary">
                 {% if clar %}
                     {% if 'clarified_text' in clar and clar['clarified_text'] %}
                         {{ clar['clarified_text'] }}
@@ -92,22 +92,22 @@ document.getElementById('regenerate-highlights-btn').addEventListener('click', a
                     <em>No clarification yet</em>
                 {% endif %}
             </td>
-            <td>
-                {% if clar and 'confidence_score' in clar and clar['confidence_score'] is not none %}
-                    <span class="confidence">{{ "%.2f"|format(clar['confidence_score']) }}</span>
+            <td data-label="Confidence">
+                {% if clar and clar['confidence_score'] is not none %}
+                    {{ "%.2f"|format(clar['confidence_score']) }}
                 {% else %}
-                    <em>n/a</em>
+                    n/a
                 {% endif %}
             </td>
-            <td>
-                {% if c.decision_status == "proposed" %}
-                    <span style="color: #ff9800;">{{ c.status_label }}</span>
-                {% elif c.decision_status == "approved" %}
-                    <span style="color: #2196f3;">{{ c.status_label }}</span>
-                {% endif %}
+            <td data-label="Status">
+                <span class="status {{ c.decision_status }}">
+                    {{ c.status_label }}
+                </span>
             </td>
-            <td><a href="/approvals/{{ c.id }}">Open</a></td>
-        </tr>
+            <td data-label="Action">
+                <a href="/approvals/{{ c.id }}">Open</a>
+            </td>
+       </tr>
     {% endfor %}
     </tbody>
 </table>
