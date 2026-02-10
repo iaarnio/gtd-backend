@@ -736,19 +736,28 @@ def restore_capture(
     """
     capture = db.get(models.Capture, capture_id)
     if capture is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Capture not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Capture not found",
+        )
 
     if capture.decision_status != "rejected":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Cannot restore capture with decision_status={capture.decision_status}. Only rejected captures can be restored.",
+            detail=(
+                f"Cannot restore capture with decision_status={capture.decision_status}. "
+                "Only rejected captures can be restored."
+            ),
         )
 
+    # --- STATE TRANSITION ---
     capture.decision_status = "proposed"
     capture.decision_at = None
+
+    # --- PERSIST (IMPORTANT) ---
     db.add(capture)
-    with transactional_session(db):
-        pass  # Context manager handles commit
+    db.commit()
+    db.refresh(capture)
 
     logger.info(
         f"Restored capture {capture_id} from rejected to proposed",
@@ -759,7 +768,10 @@ def restore_capture(
         },
     )
 
-    return {"status": "success", "message": f"Capture #{capture_id} restored to Approvals"}
+    return {
+        "status": "success",
+        "message": f"Capture #{capture_id} restored to Approvals",
+    }
 
 
 @app.put(
