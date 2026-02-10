@@ -668,28 +668,30 @@ async def reject_capture(
     """
     capture = db.get(models.Capture, capture_id)
     if capture is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Capture not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Capture not found",
+        )
 
+    # Only proposed captures can be rejected
     _ensure_proposed(capture)
 
-    # Try to save clarification from form fields
+    # Try to save clarification from form fields (best-effort)
     try:
         form = await request.form()
-        # Get current clarification to preserve fields not in form
+
         clar = _parse_clarify_json(capture.clarify_json) or {}
 
-        # Update with form fields
         project_name = form.get("project_name") or ""
         next_action = form.get("next_action") or ""
         is_next_action = form.get("is_next_action") == "on"
 
-        # Determine type: user can override via project_name or NA checkbox
+        # Determine clarification type
         if project_name:
             clar_type = "project"
         elif is_next_action:
             clar_type = "next_action"
         else:
-            # Keep original type if no explicit override
             clar_type = clar.get("type", "next_action")
 
         clar.update({
@@ -704,17 +706,24 @@ async def reject_capture(
         })
 
         capture.clarify_json = json.dumps(clar, ensure_ascii=False)
+
     except Exception as e:
-        # If form parsing fails, continue without saving
+        # Reject must still succeed even if clarification save fails
         logger.debug(f"Failed to save clarification in reject: {e}")
 
+    # --- STATE TRANSITION ---
     capture.decision_status = "rejected"
     capture.decision_at = datetime.utcnow()
-    db.add(capture)
-    with transactional_session(db):
-        pass  # Context manager handles commit
 
-    return RedirectResponse(url="/approvals", status_code=status.HTTP_303_SEE_OTHER)
+    # --- PERSIST ---
+    db.add(capture)
+    db.commit()
+    db.refresh(capture)
+
+    return RedirectResponse(
+        url="/approvals",
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
 
 
 @app.post("/captures/{capture_id}/restore")
