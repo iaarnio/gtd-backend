@@ -112,13 +112,17 @@
     {% endif %}
 </div>
 
-<!-- Daily Highlights -->
-<div style="margin-bottom: 20px;">
+<!-- Action Buttons -->
+<div style="margin-bottom: 20px; display: flex; gap: 10px; flex-wrap: wrap;">
     <button id="regenerate-highlights-btn" style="padding: 8px 16px; background: #9c27b0; color: white; border: none; border-radius: 3px; cursor: pointer; font-weight: bold;">
         ✨ Regenerate Daily Highlights
     </button>
-    <div id="highlights-status" style="margin-top: 10px; display: none; padding: 10px; border-radius: 3px;"></div>
+    <button id="sync-rtm-btn" style="padding: 8px 16px; background: #2196f3; color: white; border: none; border-radius: 3px; cursor: pointer; font-weight: bold;">
+        🔄 Sync to RTM Now
+    </button>
 </div>
+<div id="highlights-status" style="margin-top: 10px; display: none; padding: 10px; border-radius: 3px;"></div>
+<div id="sync-status" style="margin-top: 10px; display: none; padding: 10px; border-radius: 3px;"></div>
 
 <script>
 document.getElementById('regenerate-highlights-btn').addEventListener('click', async function() {
@@ -141,6 +145,48 @@ document.getElementById('regenerate-highlights-btn').addEventListener('click', a
             statusDiv.style.color = '#155724';
         } else {
             statusDiv.textContent = `Error: ${result.error || 'Failed to regenerate'}`;
+            statusDiv.style.background = '#f8d7da';
+            statusDiv.style.color = '#721c24';
+        }
+    } catch (error) {
+        statusDiv.textContent = `Error: ${error.message}`;
+        statusDiv.style.background = '#f8d7da';
+        statusDiv.style.color = '#721c24';
+    } finally {
+        btn.disabled = false;
+    }
+});
+
+document.getElementById('sync-rtm-btn').addEventListener('click', async function() {
+    const btn = this;
+    const statusDiv = document.getElementById('sync-status');
+
+    btn.disabled = true;
+    statusDiv.style.display = 'block';
+    statusDiv.textContent = 'Syncing to RTM...';
+    statusDiv.style.background = '#e3f2fd';
+    statusDiv.style.color = '#1565c0';
+
+    try {
+        const response = await fetch('/approvals/sync', { method: 'POST' });
+        const result = await response.json();
+
+        if (result.status === 'ok') {
+            if (result.synced_count > 0) {
+                statusDiv.textContent = `✓ Synced ${result.synced_count} task(s) to RTM`;
+            } else if (result.pending_before === 0) {
+                statusDiv.textContent = '✓ No pending tasks to sync';
+            } else {
+                statusDiv.textContent = `✓ Sync complete (${result.pending_after} still pending)`;
+            }
+            statusDiv.style.background = '#d4edda';
+            statusDiv.style.color = '#155724';
+            // Reload page after short delay to show updated statuses
+            if (result.synced_count > 0) {
+                setTimeout(() => location.reload(), 1500);
+            }
+        } else {
+            statusDiv.textContent = `Error: ${result.error || 'Sync failed'}`;
             statusDiv.style.background = '#f8d7da';
             statusDiv.style.color = '#721c24';
         }

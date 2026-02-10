@@ -909,6 +909,73 @@ def regenerate_highlights(db: Session = Depends(get_db)) -> dict:
     return result
 
 
+@app.post("/approvals/sync")
+def approvals_sync_now() -> dict:
+    """
+    Manually trigger RTM sync for approved captures.
+
+    Processes all approved captures that haven't been committed yet.
+    This can be called at any time, typically via UI button.
+
+    Returns:
+        dict with status, synced_count, error (if any)
+    """
+    from . import rtm_commit
+
+    logger.info(
+        "Manual RTM sync requested",
+        extra={"component": "rtm_commit", "operation": "manual_sync"},
+    )
+
+    try:
+        # Count pending before sync
+        db = SessionLocal()
+        try:
+            from . import models
+            pending_before = (
+                db.query(models.Capture)
+                .filter(
+                    models.Capture.decision_status == "approved",
+                    models.Capture.commit_status.in_(["pending", "failed"])
+                )
+                .count()
+            )
+        finally:
+            db.close()
+
+        # Run the sync
+        rtm_commit._poll_once()
+
+        # Count pending after sync
+        db = SessionLocal()
+        try:
+            pending_after = (
+                db.query(models.Capture)
+                .filter(
+                    models.Capture.decision_status == "approved",
+                    models.Capture.commit_status.in_(["pending", "failed"])
+                )
+                .count()
+            )
+        finally:
+            db.close()
+
+        synced_count = pending_before - pending_after
+        return {
+            "status": "ok",
+            "synced_count": synced_count,
+            "pending_before": pending_before,
+            "pending_after": pending_after,
+        }
+    except Exception as e:
+        logger.error(
+            f"Manual RTM sync failed: {e}",
+            extra={"component": "rtm_commit", "operation": "manual_sync"},
+            exc_info=True,
+        )
+        return {"status": "error", "error": str(e)}
+
+
 @app.post("/backlog/import")
 def backlog_import_api(text: str):
     db = SessionLocal()
