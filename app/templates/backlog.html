@@ -5,6 +5,32 @@
 {% block content %}
 <h2>📦 Backlog Status</h2>
 
+{% if drain_result %}
+<div style="margin: 20px 0; padding: 15px; border-radius: 6px;
+     {% if drain_result.failed > 0 %}
+     background: #fff3e0; border: 2px solid #ff9800;
+     {% else %}
+     background: #e8f5e9; border: 2px solid #4caf50;
+     {% endif %}
+     ">
+    {% if drain_result.processed > 0 %}
+        <strong>✅ Success!</strong> Processed {{ drain_result.processed }} backlog item(s).
+        {% if drain_result.failed > 0 %}
+            <span style="color: #ff9800;">({{ drain_result.failed }} failed)</span>
+        {% endif %}
+        <br>
+        <a href="/approvals" style="color: #2196f3; text-decoration: underline;">
+            ➡️ Go to Approvals to review them
+        </a>
+    {% else %}
+        <strong>⚠️</strong> No items were processed.
+        {% if drain_result.failed > 0 %}
+            {{ drain_result.failed }} item(s) failed.
+        {% endif %}
+    {% endif %}
+</div>
+{% endif %}
+
 <style>
     .backlog-container {
         display: grid;
@@ -200,6 +226,31 @@
         <strong>⏱️ Timeline:</strong> With 200 pending items and a {{ backlog.daily_limit }}/day limit,
         you'll process all items in about <strong>40 days</strong>. No rush!
     </p>
+    
+    {% if backlog.pending > 0 %}
+    <div style="margin-top: 20px; padding: 15px; background: #e3f2fd; border-radius: 6px; border: 2px solid #2196f3;">
+        <h4 style="margin: 0 0 10px 0; color: #1976d2;">⚡ Process Now</h4>
+        <p style="margin: 10px 0; color: #555;">
+            Don't want to wait for the scheduled run? Click below to immediately process up to {{ backlog.daily_limit }} pending items.
+        </p>
+        <form method="post" action="/backlog/drain" style="display: inline;">
+            <button
+                type="submit"
+                style="
+                    padding: 10px 18px;
+                    background: #2196f3;
+                    color: white;
+                    border: none;
+                    border-radius: 4px;
+                    cursor: pointer;
+                    font-weight: bold;
+                "
+            >
+                🚀 Process {{ backlog.daily_limit }} Items Now
+            </button>
+        </form>
+    </div>
+    {% endif %}
 </div>
 
 <!-- Import Section -->

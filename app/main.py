@@ -918,15 +918,65 @@ def backlog_import_api(text: str):
         db.close()
 
 
+@app.post("/backlog/drain")
+def backlog_drain_manual(request: Request, db: Session = Depends(get_db)):
+    """
+    Manually trigger backlog drain.
+
+    Processes up to 5 pending backlog items immediately, clarifies them,
+    and creates pending approvals.
+    This can be called at any time, typically via UI button.
+
+    Returns:
+        dict with status, processed count, failed count, errors (if any)
+        or RedirectResponse for UI form submissions
+    """
+    from . import backlog_processor
+
+    logger.info(
+        "Manual backlog drain requested",
+        extra={"component": "backlog", "operation": "manual_drain"},
+    )
+
+    result = backlog_processor.nightly_backlog_drain(db)
+    
+    # If called from UI (form submission), redirect back to backlog page
+    # If called as API, return JSON result
+    if request.headers.get("accept") == "application/json":
+        return result
+    else:
+        # Redirect with result as query params for UI feedback
+        return RedirectResponse(
+            url=f"/backlog?processed={result['processed']}&failed={result['failed']}",
+            status_code=303
+        )
+
 
 @app.get("/backlog", response_class=HTMLResponse)
-def backlog_page(request: Request):
+def backlog_page(
+    request: Request,
+    processed: Optional[int] = None,
+    failed: Optional[int] = None,
+):
     db = SessionLocal()
     try:
         status = get_backlog_status(db)
+        
+        # Prepare drain result feedback if present
+        drain_result = None
+        if processed is not None:
+            drain_result = {
+                "processed": processed,
+                "failed": failed or 0,
+            }
+        
         return templates.TemplateResponse(
             "backlog.html",
-            {"request": request, "backlog": status},
+            {
+                "request": request,
+                "backlog": status,
+                "drain_result": drain_result,
+            },
         )
     finally:
         db.close()
