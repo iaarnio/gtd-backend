@@ -6,6 +6,7 @@ import time
 from email import message_from_bytes
 from email.header import decode_header, make_header
 from typing import Optional
+from bs4 import BeautifulSoup
 
 from .config import config
 from .db import SessionLocal
@@ -99,26 +100,73 @@ def _open_imap_connection() -> Optional[imaplib.IMAP4_SSL]:
         return None
 
 
+def _clean_html(html: str) -> str:
+    soup = BeautifulSoup(html, "html.parser")
+
+    # remove scripts and styles
+    for tag in soup(["script", "style", "head", "meta"]):
+        tag.decompose()
+
+    text = soup.get_text(separator="\n")
+
+    # Normalize whitespace
+    lines = [line.strip() for line in text.splitlines()]
+    lines = [line for line in lines if line]
+
+    return "\n".join(lines)
+
+
 def _get_message_body(msg) -> str:
     """
-    Extract a reasonable text body from an email message.
-
-    Preference order: text/plain part, else fallback to raw payload.
+    Extract a clean text body from email.
+    Preference:
+    1. text/plain
+    2. cleaned text/html
     """
+
+    text_part = None
+    html_part = None
+
     if msg.is_multipart():
         for part in msg.walk():
             content_type = part.get_content_type()
-            if content_type == "text/plain":
+
+            if content_type == "text/plain" and text_part is None:
                 payload = part.get_payload(decode=True) or b""
-                return payload.decode(part.get_content_charset() or "utf-8", errors="replace")
-        # Fallback to first part
-        first = msg.get_payload(0)
-        if first:
-            payload = first.get_payload(decode=True) or b""
-            return payload.decode(first.get_content_charset() or "utf-8", errors="replace")
+                text_part = payload.decode(
+                    part.get_content_charset() or "utf-8",
+                    errors="replace",
+                )
+
+            elif content_type == "text/html" and html_part is None:
+                payload = part.get_payload(decode=True) or b""
+                html_part = payload.decode(
+                    part.get_content_charset() or "utf-8",
+                    errors="replace",
+                )
     else:
         payload = msg.get_payload(decode=True) or b""
-        return payload.decode(msg.get_content_charset() or "utf-8", errors="replace")
+        content_type = msg.get_content_type()
+
+        if content_type == "text/plain":
+            text_part = payload.decode(
+                msg.get_content_charset() or "utf-8",
+                errors="replace",
+            )
+        elif content_type == "text/html":
+            html_part = payload.decode(
+                msg.get_content_charset() or "utf-8",
+                errors="replace",
+            )
+
+    # Prefer plain text
+    if text_part and text_part.strip():
+        return text_part.strip()
+
+    # Fallback to cleaned HTML
+    if html_part:
+        return _clean_html(html_part)
+
     return ""
 
 
