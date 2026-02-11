@@ -8,44 +8,23 @@
 <h3>Capture {{ capture.id }}</h3>
 
 <p>
-    <span class="badge badge-{{ capture.decision_status }}">{{ capture.decision_status }}</span>
-    &nbsp;Created: {{ capture.created_at }} &mdash; Source: {{ capture.source }}
+    <span class="badge badge-{{ capture.decision_status }}">
+        {{ capture.decision_status }}
+    </span>
+    &nbsp;Created: {{ capture.created_at }} — Source: {{ capture.source }}
 </p>
 
 {% if capture.source_link %}
 <p>
-    <a href="{{ capture.source_link }}" target="_blank" rel="noopener noreferrer">Open original</a>
+    <a href="{{ capture.source_link }}" target="_blank" rel="noopener noreferrer">
+        Open original
+    </a>
 </p>
 {% endif %}
 
 {% set clar = clar_dict %}
 
 <style>
-
-@media (max-width: 768px) {
-    .approval-grid {
-        display: block;
-    }
-
-    .approval-grid > div {
-        width: 100%;
-        margin-bottom: 12px;
-    }
-}
-
-.warning-box {
-    background-color: #fff3cd;
-    border: 2px solid #ffc107;
-    padding: 15px;
-    border-radius: 4px;
-    margin: 20px 0;
-    color: #856404;
-}
-
-.warning-box strong {
-    color: #dc3545;
-}
-
 .form-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -77,18 +56,12 @@
     font-size: 14px;
     border: 1px solid #ccc;
     border-radius: 4px;
-    font-family: inherit;
-}
-
-.form-field textarea {
-    resize: vertical;
-    min-height: 60px;
 }
 
 .task-row {
     display: flex;
     gap: 10px;
-    align-items: flex-end;
+    align-items: center;
 }
 
 .task-row input {
@@ -99,12 +72,6 @@
     display: flex;
     align-items: center;
     gap: 8px;
-}
-
-.checkbox-group input[type="checkbox"] {
-    width: 30px;
-    height: 30px;
-    cursor: pointer;
 }
 
 .button-group {
@@ -119,9 +86,13 @@
     font-size: 16px;
     font-weight: bold;
     border: none;
-    border-radius: 4px;
+    border-radius: 6px;
     cursor: pointer;
 }
+
+.approve { background: #4CAF50; color: white; }
+.save { background: #FDD835; color: black; }
+.reject { background: #F44336; color: white; }
 
 @media (max-width: 768px) {
     .button-group {
@@ -130,105 +101,54 @@
         background: white;
         padding: 10px;
         border-top: 1px solid #ddd;
-        z-index: 10;
+        z-index: 100;
     }
-
-    .button-group button {
-        padding: 14px;
-        font-size: 16px;
-    }
-}
-
-@media (max-width: 768px) {
-    .task-row {
-        align-items: center;
-    }
-
-    .checkbox-group label {
-        font-size: 14px;
-    }
-}
-
-
-.approve {
-    background-color: #4CAF50;
-    color: white;
-}
-
-.save {
-    background-color: #FDD835;
-    color: black;
-}
-
-.reject {
-    background-color: #F44336;
-    color: white;
-}
-
-.section-title {
-    font-weight: bold;
-    margin-top: 20px;
-    margin-bottom: 10px;
-    color: #666;
-}
-
-details {
-    margin: 20px 0;
-    padding: 10px;
-    background-color: #f5f5f5;
-    border-radius: 4px;
-}
-
-details summary {
-    cursor: pointer;
-    font-weight: bold;
-    color: #d32f2f;
-}
-
-details pre {
-    background-color: white;
-    padding: 10px;
-    border-radius: 4px;
-    overflow-x: auto;
 }
 </style>
 
-<form method="post" action="/approvals/{{ capture.id }}/clarification">
+<form method="post">
 
-    <div class="form-grid approval-grid">
-        <!-- Left column -->
+    <div class="form-grid">
+
+        <!-- LEFT -->
         <div>
+
             <div class="form-field">
-                <label for="project">Project:</label>
-                <input type="text" id="project" name="project_name" value="{{ clar.get('project_name', '') or '' }}">
+                <label>Project</label>
+                <input type="text" name="project_name"
+                       value="{{ clar.get('project_name', '') or '' }}">
             </div>
 
             <div class="form-field">
-                <label for="project_shortname">Project short name:</label>
-                <input type="text" id="project_shortname" name="project_shortname"
+                <label>Project short name</label>
+                <input type="text" name="project_shortname"
                        value="{{ clar.get('project_shortname', '') or '' }}"
-                       placeholder="e.g., KITARA"
                        style="text-transform: uppercase;">
             </div>
 
             <div class="form-field">
-                <label>Task:</label>
+                <label>Task</label>
                 <div class="task-row">
-                    <input type="text" name="next_action" value="{{ clar.get('next_action', '') or '' }}">
+                    <input type="text" name="next_action"
+                           value="{{ clar.get('next_action', '') or '' }}">
+
                     <div class="checkbox-group">
-                        <label for="is_next_action">NA:</label>
-                        <input type="checkbox" id="is_next_action" name="is_next_action"
+                        <label>NA</label>
+                        <input type="checkbox"
+                               name="is_next_action"
                                {% if clar.get('type') == 'next_action' %}checked{% endif %}>
                     </div>
                 </div>
             </div>
+
         </div>
 
-        <!-- Right column -->
+        <!-- RIGHT -->
         <div>
+
             <div class="form-field">
-                <label for="context">Context:</label>
-                <select id="context" name="suggested_context">
+                <label>Context</label>
+                <select name="suggested_context">
                     <option value="">-- None --</option>
                     <option value="Work" {% if clar.get('suggested_context') == 'Work' %}selected{% endif %}>Work</option>
                     <option value="Home" {% if clar.get('suggested_context') == 'Home' %}selected{% endif %}>Home</option>
@@ -240,73 +160,53 @@ details pre {
             </div>
 
             <div class="form-field">
-                <label for="due_date">Due Date:</label>
-                <input type="date" id="due_date" name="due_date" value="{{ clar.get('due_date', '') or '' }}">
+                <label>Due Date</label>
+                <input type="date" name="due_date"
+                       value="{{ clar.get('due_date', '') or '' }}">
             </div>
 
             <div class="form-field">
-                <label for="notes">Notes:</label>
-                <textarea id="notes" name="notes">{{ clar.get('notes', '') or '' }}</textarea>
+                <label>Notes</label>
+                <textarea name="notes">{{ clar.get('notes', '') or '' }}</textarea>
             </div>
+
         </div>
+
     </div>
 
-    <!-- Non-actionable warning -->
-    {% if clar.get('type') == 'non_actionable' %}
-    <div class="warning-box">
-        <strong>⚠ Non-actionable Item</strong><br>
-        This was interpreted as non-actionable. If you want to make it actionable, edit the task above and the system will reclassify it. Otherwise, reject it.
-    </div>
-    {% endif %}
-
-    <!-- Action buttons -->
     {% if capture.decision_status == "proposed" %}
     <div class="button-group">
-        <button type="submit" class="approve" name="action" value="approve">Approve</button>
-        <button type="submit" class="save" name="action" value="save">Save</button>
-        <button type="submit" class="reject" name="action" value="reject">Reject</button>
+
+        <button type="submit"
+                class="approve"
+                formaction="/approvals/{{ capture.id }}/approve">
+            Approve
+        </button>
+
+        <button type="submit"
+                class="save"
+                formaction="/approvals/{{ capture.id }}/clarification">
+            Save
+        </button>
+
+        <button type="submit"
+                class="reject"
+                formaction="/approvals/{{ capture.id }}/reject">
+            Reject
+        </button>
+
     </div>
     {% else %}
-    <p><em>This capture has already been {{ capture.decision_status }}.</em></p>
+        <p><em>This capture has already been {{ capture.decision_status }}.</em></p>
     {% endif %}
 
-    <!-- Collapsible sections for additional info -->
-    <div class="section-title">Additional Information</div>
-
-    {% if clar.get('ambiguities') %}
-    <details>
-        <summary>Ambiguities</summary>
-        <p>{{ clar.get('ambiguities') }}</p>
-    </details>
-    {% endif %}
+    <h4>Additional Information</h4>
 
     <details>
         <summary>Raw text</summary>
         <pre>{{ capture.raw_text }}</pre>
     </details>
+
 </form>
-
-<script>
-// Handle form submission - change action based on button clicked
-document.querySelector('form').addEventListener('submit', function(e) {
-    // Uppercase project_shortname
-    const shortname = document.getElementById('project_shortname');
-    if (shortname.value) {
-        shortname.value = shortname.value.toUpperCase();
-    }
-
-    // Get which button was clicked
-    const submitButton = document.activeElement;
-    const action = submitButton.getAttribute('value');
-
-    // If approve or reject, change form action
-    if (action === 'approve') {
-        this.action = '/approvals/{{ capture.id }}/approve';
-    } else if (action === 'reject') {
-        this.action = '/approvals/{{ capture.id }}/reject';
-    }
-    // if action === 'save', keep default action /approvals/{id}/clarification
-});
-</script>
 
 {% endblock %}
