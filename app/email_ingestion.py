@@ -326,6 +326,15 @@ def _poll_once() -> None:
             logger.warning(f"Error closing IMAP connection: {e}")
 
 
+def poll_once() -> None:
+    """
+    Execute one immediate IMAP polling cycle.
+
+    Intended for manual trigger endpoints/UI actions.
+    """
+    _poll_once()
+
+
 def run_imap_poller() -> None:
     """
     Simple polling loop that runs in a background thread.
@@ -350,4 +359,3 @@ def start_background_poller() -> None:
     thread = threading.Thread(target=run_imap_poller, name="imap-poller", daemon=True)
     thread.start()
     logger.info("IMAP poller thread started")
-

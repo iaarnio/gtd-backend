@@ -397,6 +397,32 @@ def _parse_clarify_json(raw: Optional[str]) -> Optional[Dict[str, Any]]:
     return None
 
 
+def _suggest_next_action(clar: Dict[str, Any]) -> str:
+    """
+    Build a practical Task field default for approval UI.
+    """
+    next_action = (clar.get("next_action") or "").strip()
+    if next_action:
+        return next_action
+
+    clarified_text = (clar.get("clarified_text") or "").strip()
+    project_name = (clar.get("project_name") or "").strip()
+    project_shortname = (clar.get("project_shortname") or "").strip().upper()
+    clar_type = (clar.get("type") or "").strip()
+
+    base = clarified_text or project_name
+    if not base:
+        return ""
+
+    if clar_type == "project" and project_shortname:
+        prefix = f"{project_shortname} --- "
+        if base.startswith(prefix):
+            return base
+        return f"{prefix}{base}"
+
+    return base
+
+
 @app.post("/captures", response_model=CaptureOut, status_code=status.HTTP_201_CREATED)
 def create_capture(payload: CaptureCreate, db: Session = Depends(get_db)) -> CaptureOut:
     """
@@ -421,58 +447,23 @@ def create_capture(payload: CaptureCreate, db: Session = Depends(get_db)) -> Cap
 @app.get("/approvals", response_class=HTMLResponse)
 def approvals_list(request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
     """
-    List all captures awaiting action:
-    - Proposed (awaiting user decision)
-    - Approved but not yet committed to RTM (awaiting sync)
+    List only captures awaiting user decision (proposed).
     """
     # Get proposed captures (awaiting user decision)
-    proposed = (
+    captures = (
         db.query(models.Capture)
         .filter(models.Capture.decision_status == "proposed")
         .order_by(models.Capture.created_at.asc())
         .all()
     )
 
-    # Get approved captures that haven't been successfully committed yet
-    # (still awaiting RTM sync)
-    approved_pending = (
-        db.query(models.Capture)
-        .filter(
-            models.Capture.decision_status == "approved",
-            models.Capture.commit_status != "committed"
-        )
-        .order_by(models.Capture.created_at.desc())
-        .all()
-    )
-
-    # Combine all captures awaiting action
-    all_captures = proposed + approved_pending
-
     # For each capture, attach a parsed clarification dict and status for display.
     enriched = []
-    for c in all_captures:
+    for c in captures:
         clar = _parse_clarify_json(c.clarify_json)
         clar = clar or {}
 
-        # Determine status indicator
-        if c.decision_status == "proposed":
-            status_label = "Pending decision"
-        else:
-            # approved - show RTM sync status based on commit_status
-            if c.commit_status == "pending":
-                status_label = "Approved, waiting for RTM sync"
-            elif c.commit_status == "failed":
-                status_label = "RTM sync failed (will retry)"
-            elif c.commit_status == "auth_failed":
-                status_label = "RTM: Authentication required"
-            elif c.commit_status == "unknown":
-                status_label = "RTM: Unknown state (requires manual review)"
-            elif c.commit_status == "permanently_failed":
-                status_label = "RTM: Permanently failed (manual review needed)"
-            elif c.commit_status == "committed":
-                status_label = "Synced to RTM ✓"
-            else:
-                status_label = f"RTM: {c.commit_status}"
+        status_label = "Pending decision"
 
         # Wrap in a simple object-like dict for template attribute access
         enriched.append(
@@ -511,6 +502,7 @@ def approval_detail(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Capture not found")
 
     clar_dict = _parse_clarify_json(capture.clarify_json) or {}
+    next_action_prefill = _suggest_next_action(clar_dict)
     # Pretty-print JSON for editing; fall back to an empty object.
     if capture.clarify_json:
         try:
@@ -528,6 +520,7 @@ def approval_detail(
             "request": request,
             "capture": capture,
             "clar_dict": clar_dict,
+            "next_action_prefill": next_action_prefill,
             "clarification_json": clarification_json,
         },
     )
@@ -983,6 +976,34 @@ def approvals_sync_now() -> dict:
         logger.error(
             f"Manual RTM sync failed: {e}",
             extra={"component": "rtm_commit", "operation": "manual_sync"},
+            exc_info=True,
+        )
+        return {"status": "error", "error": str(e)}
+
+
+@app.post("/emails/pull")
+def pull_emails_now() -> dict:
+    """
+    Manually trigger one immediate email pull from gtdinput.
+    """
+    if not os.environ.get("IMAP_USERNAME") or not os.environ.get("IMAP_PASSWORD"):
+        return {
+            "status": "error",
+            "error": "IMAP credentials missing (set IMAP_USERNAME and IMAP_PASSWORD)",
+        }
+
+    logger.info(
+        "Manual email pull requested",
+        extra={"component": "email", "operation": "manual_pull"},
+    )
+
+    try:
+        email_ingestion.poll_once()
+        return {"status": "ok", "message": "Email pull completed"}
+    except Exception as e:
+        logger.error(
+            f"Manual email pull failed: {e}",
+            extra={"component": "email", "operation": "manual_pull"},
             exc_info=True,
         )
         return {"status": "error", "error": str(e)}
