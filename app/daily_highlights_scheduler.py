@@ -5,20 +5,21 @@ Runs scheduled jobs at configured times:
 - Daily highlights (02:00 UTC)
 - Nightly backlog drain (03:00 UTC)
 
-Calculates next run times and sleeps until them.
+Important behavior:
+- Each job runs at most once per UTC day.
+- If the process starts after the scheduled time, the job still runs once
+  immediately (catch-up), instead of being skipped until the next day.
 """
 
 import logging
 import threading
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 
-from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from . import daily_highlights
 from .config import Config
-from .db import get_db
 from .logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -63,6 +64,16 @@ def _sleep_until_next_run(hour: int, minute: int) -> None:
         time.sleep(sleep_time)
 
 
+def _has_job_window_opened(today: date, now: datetime, hour: int, minute: int) -> bool:
+    """
+    Check whether today's scheduled run time is due (or already passed).
+    """
+    scheduled = datetime.combine(today, datetime.min.time()).replace(
+        hour=hour, minute=minute
+    )
+    return now >= scheduled
+
+
 def run_background_scheduler() -> None:
     """
     Main scheduler loop.
@@ -94,11 +105,10 @@ def run_background_scheduler() -> None:
             now = datetime.utcnow()
             today = now.date()
 
-            # Check if it's time to run highlights
+            # Run highlights once per UTC day when the scheduled time has passed.
             if (
-                now.hour == highlights_hour
-                and now.minute == highlights_minute
-                and last_highlights_run != today
+                last_highlights_run != today
+                and _has_job_window_opened(today, now, highlights_hour, highlights_minute)
             ):
                 SessionLocal = Session(bind=engine)
                 try:
@@ -115,11 +125,10 @@ def run_background_scheduler() -> None:
                 finally:
                     SessionLocal.close()
 
-            # Check if it's time to run backlog drain
+            # Run backlog drain once per UTC day when the scheduled time has passed.
             if (
-                now.hour == backlog_hour
-                and now.minute == backlog_minute
-                and last_backlog_run != today
+                last_backlog_run != today
+                and _has_job_window_opened(today, now, backlog_hour, backlog_minute)
             ):
                 SessionLocal = Session(bind=engine)
                 try:

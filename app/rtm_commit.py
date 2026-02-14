@@ -4,7 +4,7 @@ import os
 import threading
 import time
 from datetime import date, datetime
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from .config import config
 from .db import SessionLocal
@@ -20,7 +20,7 @@ RTM commit loop (Step 7).
 
 Rules implemented:
 - Only approved captures are committed.
-- At most one RTM task per capture.
+- Next actions create one RTM task; projects create project + first next action.
 - Duplicate RTM task creation is prevented via persisted commit state.
 - RTM is treated as a write-only side effect (no readback).
 
@@ -93,44 +93,14 @@ def _parse_json_maybe(raw: Optional[str]) -> Optional[Dict[str, Any]]:
     return None
 
 
-def _compute_task_name_and_tags(clar: Dict[str, Any]) -> Tuple[str, str]:
-    """
-    Build a single RTM Smart Add string:
-    - task name
-    - tags (#na etc.)
-    - optional due date (^YYYY-MM-DD)
-
-    Tags are based on spec:
-    - next actions: #na
-    - health: #terveys
-    - tax: #vero
-    - christmas: #joulu
-    """
-    ctype = (clar.get("type") or "").strip()
-    project_name = (clar.get("project_name") or "").strip()
-    project_shortname = (clar.get("project_shortname") or "").strip().upper()
-    next_action = (clar.get("next_action") or "").strip()
-    clarified_text = (clar.get("clarified_text") or "").strip()
-    due_date = (clar.get("due_date") or "").strip()
-
-    if ctype == "project":
-        base = project_name or clarified_text or next_action or "Projekti"
-        # project_shortname is required and must come from clarification (checked upstream).
-        # It should already be uppercase from the extraction above.
-        shortname = project_shortname
-        if not shortname:
-            # This should not happen if _commit_one_capture checks properly, but defensive:
-            raise ValueError("project_shortname is required for projects")
-        task_name = f"{shortname} - §§§ - {base}"
-        include_na = False
-    else:
-        # next_action or non_actionable: both create RTM tasks with #na tag.
-        # non_actionable is just metadata that the AI wasn't confident, but user approved it anyway.
-        task_name = next_action or clarified_text or "Tehtävä"
-        include_na = True
-
-    text_for_tags = " ".join([task_name, clarified_text, project_name, next_action]).lower()
-    tags = []
+def _build_smart_add(
+    task_name: str,
+    *,
+    include_na: bool,
+    due_date: str,
+    text_for_tags: str,
+) -> str:
+    tags: List[str] = []
     if include_na:
         tags.append("#na")
     if "terveys" in text_for_tags:
@@ -146,8 +116,70 @@ def _compute_task_name_and_tags(clar: Dict[str, Any]) -> Tuple[str, str]:
     if due_date:
         parts.append(f"^{due_date}")
 
-    smart_add = " ".join(parts)
-    return smart_add, task_name
+    return " ".join(parts)
+
+
+def _compute_commit_entries(clar: Dict[str, Any]) -> List[Tuple[str, str]]:
+    """
+    Build RTM Smart Add entries for a capture.
+
+    Returns a list of (smart_add, task_name):
+    - next_action/non_actionable: one entry (#na)
+    - project: two entries (project task + first next action with #na)
+
+    Tags are based on spec:
+    - next actions: #na
+    - health: #terveys
+    - tax: #vero
+    - christmas: #joulu
+    """
+    ctype = (clar.get("type") or "").strip()
+    project_name = (clar.get("project_name") or "").strip()
+    project_shortname = (clar.get("project_shortname") or "").strip().upper()
+    next_action = (clar.get("next_action") or "").strip()
+    clarified_text = (clar.get("clarified_text") or "").strip()
+    due_date = (clar.get("due_date") or "").strip()
+
+    text_for_tags_base = " ".join([clarified_text, project_name, next_action]).lower()
+
+    if ctype == "project":
+        base = project_name or clarified_text or next_action or "Projekti"
+        # project_shortname is required and must come from clarification (checked upstream).
+        # It should already be uppercase from the extraction above.
+        shortname = project_shortname
+        if not shortname:
+            # This should not happen if _commit_one_capture checks properly, but defensive:
+            raise ValueError("project_shortname is required for projects")
+        project_task_name = f"{shortname} - §§§ - {base}"
+        project_smart_add = _build_smart_add(
+            project_task_name,
+            include_na=False,
+            due_date=due_date,
+            text_for_tags=f"{project_task_name} {text_for_tags_base}",
+        )
+
+        first_next_action = next_action or f"{shortname} --- Määritä ensimmäinen next action"
+        action_smart_add = _build_smart_add(
+            first_next_action,
+            include_na=True,
+            due_date=due_date,
+            text_for_tags=f"{first_next_action} {text_for_tags_base}",
+        )
+        return [
+            (project_smart_add, project_task_name),
+            (action_smart_add, first_next_action),
+        ]
+
+    # next_action or non_actionable: both create RTM tasks with #na tag.
+    # non_actionable is just metadata that the AI wasn't confident, but user approved it anyway.
+    task_name = next_action or clarified_text or "Tehtävä"
+    smart_add = _build_smart_add(
+        task_name,
+        include_na=True,
+        due_date=due_date,
+        text_for_tags=f"{task_name} {text_for_tags_base}",
+    )
+    return [(smart_add, task_name)]
 
 
 
@@ -184,13 +216,14 @@ def _commit_one_capture(db, capture: Capture) -> None:
                 pass  # Context manager handles commit
             return
 
-    smart_add, task_name = _compute_task_name_and_tags(clar)
+    commit_entries = _compute_commit_entries(clar)
     logger.debug(
-        f"Capture {capture.id}: task_name={task_name}, smart_add={smart_add}",
+        f"Capture {capture.id}: prepared {len(commit_entries)} RTM task(s)",
         extra={
             "component": "rtm_commit",
             "operation": "commit",
             "capture_id": capture.id,
+            "task_names": [task_name for _, task_name in commit_entries],
         },
     )
 
@@ -217,26 +250,46 @@ def _commit_one_capture(db, capture: Capture) -> None:
             },
         )
         timeline = create_timeline(auth_token=auth_record.auth_token)
-        ids = add_task(timeline=timeline, name=smart_add, auth_token=auth_record.auth_token)
+        created_task_ids = []
+        for smart_add, task_name in commit_entries:
+            ids = add_task(timeline=timeline, name=smart_add, auth_token=auth_record.auth_token)
+            created_task_ids.append(ids)
+            logger.info(
+                f"Committed task for capture {capture.id}: {task_name}",
+                extra={
+                    "component": "rtm_commit",
+                    "operation": "commit",
+                    "capture_id": capture.id,
+                    "attempt": capture.commit_attempt_count,
+                    "task_name": task_name,
+                    "task_id": ids.get("task_id"),
+                },
+            )
 
         # Success: update commit_status
         capture.commit_status = "committed"
         capture.commit_error_message = None
-        capture.rtm_task_id = ids.get("task_id")
-        capture.rtm_taskseries_id = ids.get("taskseries_id")
-        capture.rtm_list_id = ids.get("list_id")
+        capture.rtm_task_id = created_task_ids[0].get("task_id")
+        capture.rtm_taskseries_id = created_task_ids[0].get("taskseries_id")
+        capture.rtm_list_id = created_task_ids[0].get("list_id")
         logger.info(
-            f"Successfully committed capture {capture.id} to RTM (attempt {capture.commit_attempt_count})",
+            f"Successfully committed capture {capture.id} to RTM with {len(created_task_ids)} task(s) (attempt {capture.commit_attempt_count})",
             extra={
                 "component": "rtm_commit",
                 "operation": "commit",
                 "capture_id": capture.id,
                 "attempt": capture.commit_attempt_count,
+                "task_count": len(created_task_ids),
             },
         )
     except Exception as exc:
         # Classify the error
         error_status, error_msg = _classify_commit_error(exc)
+        if ctype == "project":
+            # Project commit can create two tasks. If failure occurs mid-sequence, retrying can duplicate.
+            # Mark unknown to force manual review and avoid automatic duplicate creation.
+            error_status = "unknown"
+            error_msg = f"Project commit failed in multi-task flow: {error_msg}"
 
         # Check if we've exceeded max attempts
         if capture.commit_attempt_count >= MAX_COMMIT_ATTEMPTS:
@@ -442,4 +495,3 @@ def start_background_committer() -> None:
     thread = threading.Thread(target=run_commit_loop, name="rtm-committer", daemon=True)
     thread.start()
     logger.info("RTM committer thread started")
-

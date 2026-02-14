@@ -556,18 +556,22 @@ async def approval_update_clarification(
     next_action = form.get("next_action") or ""
     is_next_action = form.get("is_next_action") == "on"
 
-    # Determine type: checkbox is the primary indicator
-    if project_name:
-        clar_type = "project"
-    elif is_next_action:
+    # Determine type: NA checkbox is the primary indicator
+    if is_next_action:
         clar_type = "next_action"
+    elif project_name:
+        clar_type = "project"
     else:
         # Keep original type if neither project nor NA checkbox
         clar_type = clar.get("type", "project")
 
+    clarified_text = (
+        next_action if clar_type == "next_action" else project_name
+    ) or clar.get("clarified_text")
+
     clar.update({
         "type": clar_type,
-        "clarified_text": project_name or next_action or clar.get("clarified_text"),
+        "clarified_text": clarified_text,
         "project_name": project_name or None,
         "project_shortname": (form.get("project_shortname") or "").upper() or None,
         "next_action": next_action or None,
@@ -622,18 +626,22 @@ async def approve_capture(
         next_action = form.get("next_action") or ""
         is_next_action = form.get("is_next_action") == "on"
 
-        # Determine type: user can override via project_name or NA checkbox
-        if project_name:
-            clar_type = "project"
-        elif is_next_action:
+        # Determine type: NA checkbox is the primary indicator
+        if is_next_action:
             clar_type = "next_action"
+        elif project_name:
+            clar_type = "project"
         else:
             # Keep original type if no explicit override
             clar_type = clar.get("type", "next_action")
 
+        clarified_text = (
+            next_action if clar_type == "next_action" else project_name
+        ) or clar.get("clarified_text")
+
         clar.update({
             "type": clar_type,
-            "clarified_text": project_name or next_action or clar.get("clarified_text"),
+            "clarified_text": clarified_text,
             "project_name": project_name or None,
             "project_shortname": (form.get("project_shortname") or "").upper() or None,
             "next_action": next_action or None,
@@ -686,17 +694,21 @@ async def reject_capture(
         next_action = form.get("next_action") or ""
         is_next_action = form.get("is_next_action") == "on"
 
-        # Determine clarification type
-        if project_name:
-            clar_type = "project"
-        elif is_next_action:
+        # Determine clarification type: NA checkbox is the primary indicator
+        if is_next_action:
             clar_type = "next_action"
+        elif project_name:
+            clar_type = "project"
         else:
             clar_type = clar.get("type", "next_action")
 
+        clarified_text = (
+            next_action if clar_type == "next_action" else project_name
+        ) or clar.get("clarified_text")
+
         clar.update({
             "type": clar_type,
-            "clarified_text": project_name or next_action or clar.get("clarified_text"),
+            "clarified_text": clarified_text,
             "project_name": project_name or None,
             "project_shortname": (form.get("project_shortname") or "").upper() or None,
             "next_action": next_action or None,
@@ -1047,4 +1059,3 @@ def backlog_page(
         )
     finally:
         db.close()
-
