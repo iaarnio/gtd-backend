@@ -125,7 +125,7 @@ def _compute_commit_entries(clar: Dict[str, Any]) -> List[Tuple[str, str]]:
     Build RTM Smart Add entries for a capture.
 
     Returns a list of (smart_add, task_name):
-    - next_action/non_actionable: one entry (#na)
+    - next_action/non_actionable: one entry (no #na)
     - project: two entries (project task + first next action with #na)
 
     Tags are based on spec:
@@ -171,12 +171,11 @@ def _compute_commit_entries(clar: Dict[str, Any]) -> List[Tuple[str, str]]:
             (action_smart_add, first_next_action),
         ]
 
-    # next_action or non_actionable: both create RTM tasks with #na tag.
-    # non_actionable is just metadata that the AI wasn't confident, but user approved it anyway.
+    # next_action/non_actionable: single standalone task without #na.
     task_name = next_action or clarified_text or "Tehtävä"
     smart_add = _build_smart_add(
         task_name,
-        include_na=True,
+        include_na=False,
         due_date=due_date,
         text_for_tags=f"{task_name} {text_for_tags_base}",
     )
