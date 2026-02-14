@@ -3,6 +3,7 @@ import logging
 import os
 import threading
 import time
+import xml.etree.ElementTree as ET
 from datetime import date, datetime
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -10,7 +11,7 @@ from .config import config
 from .db import SessionLocal
 from .db_utils import transactional_session
 from .models import Anchor, Capture
-from .rtm import add_task, create_timeline, is_configured
+from .rtm import add_task, call as rtm_call, create_timeline, is_configured
 
 logger = logging.getLogger(__name__)
 
@@ -346,6 +347,38 @@ def _get_active_anchor(db, today: date) -> Optional[Anchor]:
     )
 
 
+def _anchor_task_exists_in_rtm(auth_token: str, anchor_name: str) -> bool:
+    """
+    Check if an incomplete RTM task with the exact anchor name already exists.
+    """
+    data = rtm_call(
+        "rtm.tasks.getList",
+        {"filter": "status:incomplete"},
+        auth_token=auth_token,
+    )
+    raw = data.get("raw")
+    if not raw:
+        raise RuntimeError("RTM getList response missing raw XML")
+
+    root = ET.fromstring(raw)
+    if root.get("stat") != "ok":
+        err = root.find("err")
+        err_msg = err.get("msg") if err is not None else "Unknown RTM error"
+        raise RuntimeError(f"RTM getList failed: {err_msg}")
+
+    tasks_elem = root.find("tasks")
+    if tasks_elem is None:
+        return False
+
+    for list_elem in tasks_elem.findall("list"):
+        for taskseries in list_elem.findall("taskseries"):
+            name = (taskseries.get("name") or "").strip()
+            if name == anchor_name:
+                return True
+
+    return False
+
+
 def _ensure_anchor_for_pending_approvals(db) -> None:
     """
     If there are proposed captures and no active anchor for today,
@@ -364,6 +397,27 @@ def _ensure_anchor_for_pending_approvals(db) -> None:
     today = date.today()
     anchor = _get_active_anchor(db, today)
     if anchor:
+        return
+
+    anchor_name = "Tarkista GTD-hyväksynnät"
+
+    from .rtm_auth import get_rtm_auth
+    auth_record = get_rtm_auth()
+    if not auth_record or not auth_record.auth_token:
+        return
+
+    # Guard against duplicates in RTM.
+    try:
+        anchor_exists = _anchor_task_exists_in_rtm(auth_record.auth_token, anchor_name)
+    except Exception as exc:
+        logger.warning(
+            f"Could not verify existing RTM anchor task: {exc}",
+            extra={
+                "component": "rtm_commit",
+                "operation": "anchor_exists_check",
+                "error_type": "rtm_call_failed",
+            },
+        )
         return
 
     # Expire any old active anchors.
@@ -386,11 +440,24 @@ def _ensure_anchor_for_pending_approvals(db) -> None:
         pass  # Context manager handles commit
     db.refresh(anchor)
 
+    if anchor_exists:
+        state: Dict[str, Any] = {
+            "provider": "rtm",
+            "status": "already_exists",
+            "anchor_name": anchor_name,
+            "updated_at": _now_iso(),
+        }
+        anchor.external_state = json.dumps(state, ensure_ascii=False)
+        db.add(anchor)
+        with transactional_session(db):
+            pass  # Context manager handles commit
+        return
+
     # Attempt to create the RTM anchor task.
     # Anchor is not a project, so it uses a simple task name without project format.
     # Include today's date so it appears as priority in daily list
     today_iso = today.isoformat()
-    smart_add = f"Tarkista GTD-hyväksynnät ^{today_iso}"
+    smart_add = f"{anchor_name} ^{today_iso}"
 
     state: Dict[str, Any] = {
         "provider": "rtm",
@@ -401,12 +468,6 @@ def _ensure_anchor_for_pending_approvals(db) -> None:
     }
 
     try:
-        # Get auth token from DB
-        from .rtm_auth import get_rtm_auth
-        auth_record = get_rtm_auth()
-        if not auth_record or not auth_record.auth_token:
-            raise RuntimeError("No RTM auth token available (user must authenticate)")
-
         timeline = create_timeline(auth_token=auth_record.auth_token)
         ids = add_task(timeline=timeline, name=smart_add, auth_token=auth_record.auth_token)
     except Exception as exc:

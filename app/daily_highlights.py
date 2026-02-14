@@ -10,8 +10,9 @@ Selects 5 lonely actions (no project, no #na tag, not completed) to highlight ea
 
 import json
 import logging
+import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from sqlalchemy.orm import Session
 
@@ -36,6 +37,71 @@ FINAL_SELECT = 5
 # Anti-nag rule: exclude tasks suggested 3+ times in last 14 days
 MAX_SUGGESTIONS_14D = 3
 SUGGESTION_WINDOW_DAYS = 14
+
+
+def _parse_rtm_error(root: ET.Element) -> str:
+    err = root.find("err")
+    if err is None:
+        return "Unknown RTM error"
+    return err.get("msg") or "Unknown RTM error"
+
+
+def _parse_getlist_response(raw_xml: str) -> Dict[str, List[Dict[str, object]]]:
+    """
+    Parse rtm.tasks.getList XML to a minimal dict structure used by highlights.
+    """
+    root = ET.fromstring(raw_xml)
+    if root.get("stat") != "ok":
+        raise RuntimeError(f"RTM getList failed: {_parse_rtm_error(root)}")
+
+    tasks_elem = root.find("tasks")
+    if tasks_elem is None:
+        return {"lists": []}
+
+    lists: List[Dict[str, object]] = []
+    for list_elem in tasks_elem.findall("list"):
+        taskseries_items: List[Dict[str, object]] = []
+        for ts in list_elem.findall("taskseries"):
+            tasks = []
+            for task in ts.findall("task"):
+                tasks.append(
+                    {
+                        "id": task.get("id"),
+                        "completed": task.get("completed"),
+                    }
+                )
+            taskseries_items.append(
+                {
+                    "id": ts.get("id"),
+                    "task": tasks,
+                }
+            )
+        lists.append(
+            {
+                "id": list_elem.get("id"),
+                "taskseries": taskseries_items,
+            }
+        )
+
+    return {"lists": lists}
+
+
+def _rtm_tasks_get_list(params: Dict[str, str]) -> Dict[str, List[Dict[str, object]]]:
+    data = rtm_call("rtm.tasks.getList", params)
+    raw = data.get("raw")
+    if not raw:
+        raise RuntimeError("RTM getList response missing raw XML")
+    return _parse_getlist_response(raw)
+
+
+def _rtm_task_tag_mutation(method: str, params: Dict[str, str]) -> None:
+    data = rtm_call(method, params)
+    raw = data.get("raw")
+    if not raw:
+        raise RuntimeError(f"RTM {method} response missing raw XML")
+    root = ET.fromstring(raw)
+    if root.get("stat") != "ok":
+        raise RuntimeError(f"RTM {method} failed: {_parse_rtm_error(root)}")
 
 
 def run_daily_highlights(db: Session) -> dict:
@@ -135,9 +201,9 @@ def clear_system_highlights(db: Session) -> None:
 
     try:
         # Get all tasks with #highlight-today
-        tasks = rtm_call("rtm.tasks.getList", search=f"tag:{SYSTEM_LABEL}")
-
-        if not tasks or "taskseries" not in tasks:
+        tasks = _rtm_tasks_get_list({"filter": f"tag:{SYSTEM_LABEL}"})
+        lists = tasks.get("lists", [])
+        if not lists:
             logger.debug(
                 "No tasks with system label to clear",
                 extra={"component": "highlights"},
@@ -145,32 +211,35 @@ def clear_system_highlights(db: Session) -> None:
             return
 
         count = 0
-        for taskseries in tasks.get("taskseries", []):
-            for task in taskseries.get("task", []):
-                rtm_task_id = task.get("id")
-                taskseries_id = taskseries.get("id")
-                list_id = tasks.get("id")
+        for list_data in lists:
+            list_id = list_data.get("id")
+            for taskseries in list_data.get("taskseries", []):
+                for task in taskseries.get("task", []):
+                    rtm_task_id = task.get("id")
+                    taskseries_id = taskseries.get("id")
 
-                if rtm_task_id and taskseries_id and list_id:
-                    try:
-                        rtm_call(
-                            "rtm.tasks.removeTag",
-                            list_id=list_id,
-                            taskseries_id=taskseries_id,
-                            task_id=rtm_task_id,
-                            tags=SYSTEM_LABEL,
-                        )
-                        count += 1
-                    except Exception as e:
-                        logger.warning(
-                            f"Failed to clear highlight from task {rtm_task_id}: {e}",
-                            extra={
-                                "component": "highlights",
-                                "operation": "clear_tag",
-                                "rtm_task_id": rtm_task_id,
-                                "error_type": "rtm_call_failed",
-                            },
-                        )
+                    if rtm_task_id and taskseries_id and list_id:
+                        try:
+                            _rtm_task_tag_mutation(
+                                "rtm.tasks.removeTag",
+                                {
+                                    "list_id": list_id,
+                                    "taskseries_id": taskseries_id,
+                                    "task_id": rtm_task_id,
+                                    "tags": SYSTEM_LABEL,
+                                },
+                            )
+                            count += 1
+                        except Exception as e:
+                            logger.warning(
+                                f"Failed to clear highlight from task {rtm_task_id}: {e}",
+                                extra={
+                                    "component": "highlights",
+                                    "operation": "clear_tag",
+                                    "rtm_task_id": rtm_task_id,
+                                    "error_type": "rtm_call_failed",
+                                },
+                            )
 
         logger.info(
             f"Cleared system highlights from {count} tasks",
@@ -265,19 +334,22 @@ def filter_existing_uncompleted_tasks(
 
     for task in candidates:
         try:
-            status = rtm_call("rtm.tasks.getList", list_id=task.rtm_list_id)
+            status = _rtm_tasks_get_list({"list_id": task.rtm_list_id})
             found = False
             completed = False
 
-            for ts in status.get("taskseries", []):
-                if ts.get("id") == task.rtm_taskseries_id:
-                    found = True
-                    for t in ts.get("task", []):
-                        if t.get("id") == task.rtm_task_id:
-                            # Check if completed
-                            if t.get("completed"):
-                                completed = True
-                            break
+            for list_data in status.get("lists", []):
+                for ts in list_data.get("taskseries", []):
+                    if ts.get("id") == task.rtm_taskseries_id:
+                        found = True
+                        for t in ts.get("task", []):
+                            if t.get("id") == task.rtm_task_id:
+                                # Check if completed
+                                if t.get("completed"):
+                                    completed = True
+                                break
+                        break
+                if found:
                     break
 
             if not found:
@@ -369,12 +441,14 @@ def apply_highlights_to_rtm(db: Session, selected: List[models.RtmTask]) -> None
     """
     for task in selected:
         try:
-            rtm_call(
+            _rtm_task_tag_mutation(
                 "rtm.tasks.addTag",
-                list_id=task.rtm_list_id,
-                taskseries_id=task.rtm_taskseries_id,
-                task_id=task.rtm_task_id,
-                tags=SYSTEM_LABEL,
+                {
+                    "list_id": task.rtm_list_id,
+                    "taskseries_id": task.rtm_taskseries_id,
+                    "task_id": task.rtm_task_id,
+                    "tags": SYSTEM_LABEL,
+                },
             )
             logger.debug(
                 f"Applied highlight to task {task.rtm_task_id}",
