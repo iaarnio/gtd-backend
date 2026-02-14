@@ -10,6 +10,11 @@ Automatically captures task ideas from Gmail, clarifies them with AI, and syncs 
 4. **Approve tasks** at http://localhost:8000/approvals
 5. Tasks sync to RTM automatically
 
+## Running Tests
+
+- Run all tests: `./scripts/test`
+- Pass pytest args: `./scripts/test -k anchor`
+
 ## How It Works
 
 Email → AI clarification → You approve → RTM sync

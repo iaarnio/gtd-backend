@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+VENV_PY="$ROOT_DIR/.venv/bin/python"
+
+if [[ ! -x "$VENV_PY" ]]; then
+  echo "Missing virtual environment at .venv"
+  echo "Run: python3 -m venv .venv"
+  echo "Then install deps: .venv/bin/python -m pip install -r requirements.txt"
+  exit 1
+fi
+
+if ! "$VENV_PY" -c "import pytest" >/dev/null 2>&1; then
+  echo "pytest is not installed in .venv"
+  echo "Install dependencies: .venv/bin/python -m pip install -r requirements.txt"
+  exit 1
+fi
+
+cd "$ROOT_DIR"
+exec "$VENV_PY" -m pytest -q "$@"
