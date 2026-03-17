@@ -11,7 +11,7 @@ from .config import config
 from .db import SessionLocal
 from .db_utils import transactional_session
 from .models import Anchor, Capture
-from .rtm import add_task, call as rtm_call, create_timeline, is_configured
+from .rtm import add_note, add_task, call as rtm_call, create_timeline, is_configured
 
 logger = logging.getLogger(__name__)
 
@@ -265,6 +265,41 @@ def _commit_one_capture(db, capture: Capture) -> None:
                     "task_id": ids.get("task_id"),
                 },
             )
+
+        # Add notes to the first (main) task if present in clarification
+        notes_text = (clar.get("notes") or "").strip()
+        if notes_text and created_task_ids:
+            first_ids = created_task_ids[0]
+            try:
+                add_note(
+                    timeline=timeline,
+                    list_id=first_ids["list_id"],
+                    taskseries_id=first_ids["taskseries_id"],
+                    task_id=first_ids["task_id"],
+                    note_title="",
+                    note_text=notes_text,
+                    auth_token=auth_record.auth_token,
+                )
+                logger.info(
+                    f"Added note to RTM task for capture {capture.id}",
+                    extra={
+                        "component": "rtm_commit",
+                        "operation": "add_note",
+                        "capture_id": capture.id,
+                    },
+                )
+            except Exception as note_exc:
+                # Note creation failure is non-fatal: the task itself was created.
+                # Log the error but do not change commit_status.
+                logger.warning(
+                    f"Failed to add note to RTM task for capture {capture.id}: {note_exc}",
+                    extra={
+                        "component": "rtm_commit",
+                        "operation": "add_note",
+                        "capture_id": capture.id,
+                        "error_type": type(note_exc).__name__,
+                    },
+                )
 
         # Success: update commit_status
         capture.commit_status = "committed"

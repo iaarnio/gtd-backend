@@ -163,6 +163,39 @@ def create_timeline(auth_token: Optional[str] = None) -> str:
     raise RuntimeError(f"Unexpected response from rtm.timelines.create: {data}")
 
 
+def add_note(
+    timeline: str,
+    list_id: str,
+    taskseries_id: str,
+    task_id: str,
+    note_title: str,
+    note_text: str,
+    auth_token: Optional[str] = None,
+) -> None:
+    """
+    Add a note to an existing RTM task via rtm.tasks.notes.add.
+    """
+    data = call(
+        "rtm.tasks.notes.add",
+        {
+            "timeline": timeline,
+            "list_id": list_id,
+            "taskseries_id": taskseries_id,
+            "task_id": task_id,
+            "note_title": note_title,
+            "note_text": note_text,
+        },
+        auth_token=auth_token,
+    )
+    if "raw" in data:
+        import xml.etree.ElementTree as ET
+        root = ET.fromstring(data["raw"])
+        if root.get("stat") != "ok":
+            err = root.find("err")
+            err_msg = err.get("msg") if err is not None else "Unknown error"
+            raise RuntimeError(f"RTM notes.add failed: {err_msg}")
+
+
 def add_task(timeline: str, name: str, auth_token: Optional[str] = None) -> Dict[str, str]:
     """
     Create a new task via rtm.tasks.add.
