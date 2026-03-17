@@ -93,6 +93,7 @@
                 <th>Source</th>
                 <th>Raw</th>
                 <th>Clarified</th>
+                <th>Notes</th>
                 <th>Decision</th>
                 <th>RTM</th>
                 <th></th>
@@ -106,6 +107,7 @@
                 <td>{{ capture.source }}</td>
                 <td><code>{{ capture.raw_text[:60] }}</code></td>
                 <td>{{ capture.clarified_text }}</td>
+                <td class="small">{{ capture.notes }}</td>
                 <td>
                     <span class="badge badge-{{ capture.decision_status }}">
                         {{ capture.decision_status }}
@@ -149,6 +151,12 @@
         {% if capture.clarified_text %}
         <div class="audit-clarified">
             {{ capture.clarified_text }}
+        </div>
+        {% endif %}
+
+        {% if capture.notes %}
+        <div class="audit-notes" style="font-size: 0.85rem; color: #555; font-style: italic;">
+            📝 {{ capture.notes }}
         </div>
         {% endif %}
 

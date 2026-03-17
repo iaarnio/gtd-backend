@@ -342,6 +342,7 @@ def audit_log(
             "email_link": c.email_link,
             "raw_text": c.raw_text[:100],  # First 100 chars
             "clarified_text": clar.get("clarified_text", ""),
+            "notes": clar.get("notes", ""),
             "decision_status": c.decision_status,
             "decision_at": c.decision_at,
             "commit_status": c.commit_status,
