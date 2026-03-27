@@ -82,10 +82,11 @@ class Config:
     Environment: MAX_CLARIFY_RETRIES
     """
 
-    MAX_COMMIT_RETRIES: int = int(os.environ.get("MAX_COMMIT_RETRIES", "5"))
+    MAX_COMMIT_RETRIES: int = int(os.environ.get("MAX_COMMIT_RETRIES", "3"))
     """
     Maximum number of RTM commit attempts for failed captures.
     After this, capture is marked permanently_failed.
+    Immediate sync (1) + background retries (2) = 3 total attempts.
     Environment: MAX_COMMIT_RETRIES
     """
 
@@ -121,10 +122,10 @@ class Config:
     Environment: CLARIFY_POLL_INTERVAL
     """
 
-    COMMIT_POLL_INTERVAL: int = int(os.environ.get("COMMIT_POLL_INTERVAL", "900"))
+    COMMIT_RETRY_DELAY: int = int(os.environ.get("COMMIT_RETRY_DELAY", "300"))
     """
-    Interval for checking for captures that need RTM commit in seconds.
-    Environment: COMMIT_POLL_INTERVAL
+    Delay in seconds between background RTM commit retries (default: 5 minutes).
+    Environment: COMMIT_RETRY_DELAY
     """
 
     # ============================================================================

@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import os
@@ -49,8 +50,9 @@ def initialize_database() -> None:
     # Start clarification loop. If no OpenAI API key is configured this
     # becomes a no-op.
     clarification.start_background_clarifier()
-    # Start RTM commit loop. If RTM is not configured this becomes a no-op.
-    rtm_commit.start_background_committer()
+    # Run one-time RTM startup sweep to process any captures stuck
+    # from before restart and ensure anchor tasks exist.
+    rtm_commit.startup_sweep()
     # Start daily highlights scheduler. Runs at configured time each day.
     from . import daily_highlights_scheduler
     daily_highlights_scheduler.start_scheduler()
@@ -654,6 +656,13 @@ async def approve_capture(
     db.add(capture)
     with transactional_session(db):
         pass  # Context manager handles commit
+
+    # Trigger immediate RTM sync for the just-approved capture
+    # (also picks up any previously failed captures)
+    failed_ids = rtm_commit.sync_approved_captures(capture_ids=[capture_id])
+    if failed_ids:
+        # Spawn background retries for captures that failed immediate sync
+        asyncio.ensure_future(rtm_commit.retry_failed_captures(failed_ids))
 
     return RedirectResponse(url="/approvals", status_code=status.HTTP_303_SEE_OTHER)
 
