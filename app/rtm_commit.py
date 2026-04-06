@@ -1,8 +1,7 @@
+import asyncio
 import json
 import logging
 import os
-import threading
-import time
 import xml.etree.ElementTree as ET
 from datetime import date, datetime
 from typing import Any, Dict, List, Optional, Tuple
@@ -34,9 +33,9 @@ explicit human decision to clear later (hardening step).
 """
 
 
-# Import polling interval and retry limits from config
-POLL_INTERVAL_SECONDS = config.COMMIT_POLL_INTERVAL
+# Import retry limits from config
 MAX_COMMIT_ATTEMPTS = config.MAX_COMMIT_RETRIES
+RETRY_DELAY_SECONDS = config.COMMIT_RETRY_DELAY
 
 
 def _now_iso() -> str:
@@ -574,19 +573,147 @@ def _poll_once() -> None:
         db.close()
 
 
-def run_commit_loop() -> None:
-    logger.info(f"RTM commit loop started, polling every {POLL_INTERVAL_SECONDS} seconds")
-    while True:
+async def retry_failed_captures(capture_ids: list) -> None:
+    """
+    Background retry task for captures that failed immediate sync.
+
+    Retries up to (MAX_COMMIT_ATTEMPTS - 1) times with RETRY_DELAY_SECONDS
+    between attempts. Runs as an asyncio task — does NOT block HTTP responses.
+
+    Args:
+        capture_ids: List of capture IDs to retry
+    """
+    for attempt in range(MAX_COMMIT_ATTEMPTS - 1):
+        await asyncio.sleep(RETRY_DELAY_SECONDS)
+
+        db = SessionLocal()
         try:
-            _poll_once()
+            remaining = (
+                db.query(Capture)
+                .filter(
+                    Capture.id.in_(capture_ids),
+                    Capture.commit_status.in_(["pending", "failed"]),
+                )
+                .all()
+            )
+            if not remaining:
+                logger.info(
+                    f"Background retry: all captures committed, stopping",
+                    extra={"component": "rtm_commit", "operation": "background_retry"},
+                )
+                return
+
+            logger.info(
+                f"Background retry attempt {attempt + 1}/{MAX_COMMIT_ATTEMPTS - 1}: "
+                f"{len(remaining)} captures to retry",
+                extra={
+                    "component": "rtm_commit",
+                    "operation": "background_retry",
+                    "attempt": attempt + 1,
+                    "capture_count": len(remaining),
+                },
+            )
+            for capture in remaining:
+                _commit_one_capture(db, capture)
         except Exception as e:
-            # Crash-safe: never bring the service down because RTM is failing.
-            logger.error(f"Error in RTM commit loop: {e}", exc_info=True)
-        time.sleep(POLL_INTERVAL_SECONDS)
+            logger.error(
+                f"Error in background retry: {e}",
+                extra={"component": "rtm_commit", "operation": "background_retry"},
+                exc_info=True,
+            )
+        finally:
+            db.close()
 
 
-def start_background_committer() -> None:
-    logger.info("Starting background RTM committer loop")
-    thread = threading.Thread(target=run_commit_loop, name="rtm-committer", daemon=True)
-    thread.start()
-    logger.info("RTM committer thread started")
+def sync_approved_captures(capture_ids: list = None) -> list:
+    """
+    Immediately sync approved captures to RTM.
+
+    Called after approve_capture() to sync the just-approved capture
+    and any previously failed captures.
+
+    Args:
+        capture_ids: Optional list of specific capture IDs to sync.
+                     If None, syncs all pending/failed approved captures.
+
+    Returns:
+        List of capture IDs that failed and need background retry.
+    """
+    import os
+
+    api_key = os.environ.get("RTM_API_KEY")
+    shared_secret = os.environ.get("RTM_SHARED_SECRET")
+    if not api_key or not shared_secret:
+        logger.debug("RTM API credentials not configured, skipping sync")
+        return []
+
+    from .rtm_auth import is_rtm_auth_valid
+    if not is_rtm_auth_valid():
+        logger.info("RTM auth token not valid, skipping sync")
+        return []
+
+    db = SessionLocal()
+    failed_ids = []
+    try:
+        # Always process all pending/failed approved captures
+        # (includes the just-approved one plus any previously failed)
+        captures = (
+            db.query(Capture)
+            .filter(
+                Capture.decision_status == "approved",
+                Capture.commit_status.in_(["pending", "failed"]),
+            )
+            .order_by(Capture.created_at.asc())
+            .all()
+        )
+
+        if not captures:
+            return []
+
+        logger.info(
+            f"Immediate RTM sync: processing {len(captures)} captures",
+            extra={
+                "component": "rtm_commit",
+                "operation": "immediate_sync",
+                "capture_count": len(captures),
+            },
+        )
+
+        for capture in captures:
+            _commit_one_capture(db, capture)
+            # Re-read status after commit attempt
+            db.refresh(capture)
+            if capture.commit_status in ("pending", "failed"):
+                failed_ids.append(capture.id)
+    except Exception as e:
+        logger.error(
+            f"Error in immediate RTM sync: {e}",
+            extra={"component": "rtm_commit", "operation": "immediate_sync"},
+            exc_info=True,
+        )
+    finally:
+        db.close()
+
+    return failed_ids
+
+
+def startup_sweep() -> None:
+    """
+    One-time sweep on application startup.
+
+    Processes any captures stuck in pending/failed state from before restart,
+    and ensures anchor tasks are created for pending approvals.
+    Replaces the old background polling loop for restart recovery.
+    """
+    logger.info(
+        "Running startup RTM sweep",
+        extra={"component": "rtm_commit", "operation": "startup_sweep"},
+    )
+    try:
+        _poll_once()
+    except Exception as e:
+        logger.error(
+            f"Error in startup RTM sweep: {e}",
+            extra={"component": "rtm_commit", "operation": "startup_sweep"},
+            exc_info=True,
+        )

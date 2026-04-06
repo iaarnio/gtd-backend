@@ -463,6 +463,22 @@ def _poll_once() -> None:
             with transactional_session(db):
                 pass  # Context manager handles commit
 
+            # After successful clarification, ensure an RTM anchor task
+            # exists to remind user about pending approvals.
+            if capture.clarify_status == "completed":
+                try:
+                    from . import rtm_commit
+                    rtm_commit._ensure_anchor_for_pending_approvals(db)
+                except Exception as anchor_exc:
+                    logger.warning(
+                        f"Failed to create anchor task after clarification: {anchor_exc}",
+                        extra={
+                            "component": "clarification",
+                            "operation": "anchor_trigger",
+                            "capture_id": capture.id,
+                        },
+                    )
+
     finally:
         db.close()
 

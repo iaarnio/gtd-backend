@@ -6,6 +6,7 @@ After clarification, items feed into standard approve→commit pipeline.
 """
 
 import logging
+import os
 from datetime import datetime
 from typing import List, Optional, Dict
 
@@ -222,8 +223,27 @@ def _clarify_backlog_item(db: Session, item: models.BacklogItem) -> Optional[str
     Returns:
         JSON string of clarification result, or None if clarification failed
     """
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if not api_key:
+        logger.warning(
+            "OPENAI_API_KEY not configured, backlog clarification disabled",
+            extra={"component": "backlog", "backlog_id": item.id},
+        )
+        return None
+
+    base_url = os.environ.get("OPENAI_BASE_URL", "").strip()
+    if not base_url:
+        logger.warning(
+            "OPENAI_BASE_URL not configured, backlog clarification disabled",
+            extra={"component": "backlog", "backlog_id": item.id},
+        )
+        return None
+
+    model = os.environ.get("OPENAI_MODEL", "gpt-4.1-mini")
+    user_prompt = clarification._build_user_prompt(item.raw_text)
+
     try:
-        result = clarification._call_llm_api(item.raw_text)
+        result = clarification._call_llm_api(api_key, base_url, model, user_prompt, item.id)
 
         if result:
             import json
