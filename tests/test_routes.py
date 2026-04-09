@@ -16,7 +16,7 @@ def client(db_session, monkeypatch):
     # Suppress background threads and startup side effects
     monkeypatch.setattr("app.email_ingestion.start_background_poller", lambda: None)
     monkeypatch.setattr("app.clarification.start_background_clarifier", lambda: None)
-    monkeypatch.setattr("app.rtm_commit.start_background_committer", lambda: None)
+    monkeypatch.setattr("app.rtm_commit.startup_sweep", lambda: None)
     monkeypatch.setattr("app.daily_highlights_scheduler.start_scheduler", lambda: None)
     monkeypatch.setattr("app.rtm_auth.bootstrap_rtm_auth_from_env", lambda: None)
 

@@ -20,7 +20,7 @@ class TestConfigDefaults:
     def test_retry_defaults(self):
         assert Config.MAX_HTTP_RETRIES == 3
         assert Config.MAX_CLARIFY_RETRIES == 5
-        assert Config.MAX_COMMIT_RETRIES == 5
+        assert Config.MAX_COMMIT_RETRIES == 3
 
     def test_circuit_breaker_defaults(self):
         assert Config.CIRCUIT_BREAKER_FAILURE_THRESHOLD == 5
@@ -29,7 +29,7 @@ class TestConfigDefaults:
     def test_polling_defaults(self):
         assert Config.EMAIL_POLL_INTERVAL == 3600
         assert Config.CLARIFY_POLL_INTERVAL == 900
-        assert Config.COMMIT_POLL_INTERVAL == 900
+        assert Config.COMMIT_RETRY_DELAY == 300
 
     def test_clarify_retry_delays(self):
         delays = Config.CLARIFY_RETRY_DELAYS
