@@ -2,7 +2,8 @@ import asyncio
 import json
 import logging
 import os
-from datetime import datetime, timedelta
+from contextlib import asynccontextmanager
+from datetime import timedelta
 from typing import Any, Dict, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Form, status
@@ -18,6 +19,7 @@ from .logging_config import configure_logging, get_logger
 from .rtm import auth_get_frob, auth_get_token
 from .rtm_auth import is_rtm_auth_valid, store_rtm_auth, bootstrap_rtm_auth_from_env
 from .schemas import CaptureCreate, CaptureOut, ClarificationUpdate
+from .time_utils import utcnow_iso_z, utcnow_naive
 from app.backlog_processor import bulk_import_backlog, get_backlog_status
 from app.db import SessionLocal
 
@@ -29,11 +31,6 @@ configure_logging(
 )
 logger = get_logger(__name__)
 
-app = FastAPI(title="Personal GTD Backend", version="0.1.0")
-templates = Jinja2Templates(directory="app/templates")
-
-
-@app.on_event("startup")
 def initialize_database() -> None:
     """
     Ensure the SQLite database file exists and all tables are created,
@@ -56,6 +53,16 @@ def initialize_database() -> None:
     # Start daily highlights scheduler. Runs at configured time each day.
     from . import daily_highlights_scheduler
     daily_highlights_scheduler.start_scheduler()
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    initialize_database()
+    yield
+
+
+app = FastAPI(title="Personal GTD Backend", version="0.1.0", lifespan=lifespan)
+templates = Jinja2Templates(directory="app/templates")
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -82,9 +89,9 @@ def dashboard(request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
     backlog_status = backlog_processor.get_backlog_status(db)
 
     return templates.TemplateResponse(
+        request,
         "dashboard.html",
         {
-            "request": request,
             "pending_approvals": pending_approvals,
             "approved_pending_rtm": approved_pending_rtm,
             "backlog_pending": backlog_status["pending"],
@@ -178,10 +185,7 @@ def health_check(request: Request, db: Session = Depends(get_db)) -> HTMLRespons
             "message": "LLM clarification is not configured (optional)"
         }
 
-    return templates.TemplateResponse(
-        "health.html",
-        {"request": request, "health": health_status},
-    )
+    return templates.TemplateResponse(request, "health.html", {"health": health_status})
 
 
 @app.get("/metrics", response_class=HTMLResponse)
@@ -195,7 +199,7 @@ def metrics(request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
     from sqlalchemy import func
 
     metrics_data = {
-        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "timestamp": utcnow_iso_z(),
         "captures": {
             "total": db.query(func.count(models.Capture.id)).scalar() or 0,
             "by_decision_status": {},
@@ -250,7 +254,7 @@ def metrics(request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
     )
 
     # Recent failures (last 24 hours)
-    one_day_ago = datetime.utcnow() - timedelta(days=1)
+    one_day_ago = utcnow_naive() - timedelta(days=1)
 
     failed_clarifications = (
         db.query(func.count(models.Capture.id)).filter(
@@ -271,10 +275,7 @@ def metrics(request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
     metrics_data["system"]["running"] = True
     metrics_data["system"]["version"] = "0.1.0"
 
-    return templates.TemplateResponse(
-        "metrics.html",
-        {"request": request, "metrics": metrics_data},
-    )
+    return templates.TemplateResponse(request, "metrics.html", {"metrics": metrics_data})
 
 @app.post("/backlog/import/ui")
 def backlog_import_ui(tasks: str = Form(...)):
@@ -360,9 +361,9 @@ def audit_log(
     all_commit_statuses = db.query(models.Capture.commit_status).distinct().order_by(models.Capture.commit_status).all()
 
     return templates.TemplateResponse(
+        request,
         "audit_log.html",
         {
-            "request": request,
             "captures": enriched,
             "search_query": q or "",
             "selected_source": source or "",
@@ -485,8 +486,9 @@ def approvals_list(request: Request, db: Session = Depends(get_db)) -> HTMLRespo
     rtm_auth_valid = is_rtm_auth_valid()
 
     return templates.TemplateResponse(
+        request,
         "approvals_list.html",
-        {"request": request, "captures": enriched, "rtm_auth_valid": rtm_auth_valid},
+        {"captures": enriched, "rtm_auth_valid": rtm_auth_valid},
     )
 
 
@@ -518,9 +520,9 @@ def approval_detail(
         clarification_json = "{\n  \n}"
 
     return templates.TemplateResponse(
+        request,
         "approval_detail.html",
         {
-            "request": request,
             "capture": capture,
             "clar_dict": clar_dict,
             "next_action_prefill": next_action_prefill,
@@ -652,7 +654,7 @@ async def approve_capture(
         logger.debug(f"Failed to save clarification in approve: {e}")
 
     capture.decision_status = "approved"
-    capture.decision_at = datetime.utcnow()
+    capture.decision_at = utcnow_naive()
     db.add(capture)
     with transactional_session(db):
         pass  # Context manager handles commit
@@ -728,7 +730,7 @@ async def reject_capture(
 
     # --- STATE TRANSITION ---
     capture.decision_status = "rejected"
-    capture.decision_at = datetime.utcnow()
+    capture.decision_at = utcnow_naive()
 
     # --- PERSIST ---
     db.add(capture)
@@ -858,8 +860,9 @@ def rtm_auth_start(request: Request) -> HTMLResponse:
         )
 
         return templates.TemplateResponse(
+            request,
             "rtm_auth.html",
-            {"request": request, "auth_url": auth_url, "frob": frob},
+            {"auth_url": auth_url, "frob": frob},
         )
     except Exception as e:
         raise HTTPException(
@@ -1081,9 +1084,9 @@ def backlog_page(
             }
         
         return templates.TemplateResponse(
+            request,
             "backlog.html",
             {
-                "request": request,
                 "backlog": status,
                 "drain_result": drain_result,
             },

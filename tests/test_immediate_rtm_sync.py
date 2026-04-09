@@ -7,11 +7,11 @@ Covers:
 """
 
 import json
-from datetime import datetime
 
 import pytest
 
 from app import models, rtm_commit
+from app.time_utils import utcnow_naive
 from tests.factories import make_approved_capture, make_capture
 
 
@@ -77,7 +77,7 @@ class TestCommitOneCapture:
         capture = make_capture(
             db_session,
             decision_status="approved",
-            decision_at=datetime.utcnow(),
+            decision_at=utcnow_naive(),
             clarify_json=json.dumps(clar),
         )
 
@@ -102,7 +102,7 @@ class TestCommitOneCapture:
         capture = make_capture(
             db_session,
             decision_status="approved",
-            decision_at=datetime.utcnow(),
+            decision_at=utcnow_naive(),
             clarify_json=json.dumps(clar),
         )
 
@@ -209,7 +209,7 @@ class TestCommitErrors:
         capture = make_capture(
             db_session,
             decision_status="approved",
-            decision_at=datetime.utcnow(),
+            decision_at=utcnow_naive(),
             clarify_json=json.dumps(clar),
         )
 

@@ -5,16 +5,15 @@ Slow digestion of bulk-imported tasks at controlled rate (e.g., 5 per day).
 After clarification, items feed into standard approve→commit pipeline.
 """
 
-import logging
 import os
-from datetime import datetime
-from typing import List, Optional, Dict
+from typing import Dict, List, Optional
 
 from sqlalchemy.orm import Session
 
 from . import clarification, models
 from .db_utils import transactional_session
 from .logging_config import get_logger
+from .time_utils import utcnow_naive
 
 logger = get_logger(__name__)
 
@@ -189,7 +188,7 @@ def _process_backlog_item(db: Session, item: models.BacklogItem) -> None:
 
         # Mark backlog item as processed
         item.status = "processed"
-        item.processed_at = datetime.utcnow()
+        item.processed_at = utcnow_naive()
         db.add(item)
 
         with transactional_session(db):

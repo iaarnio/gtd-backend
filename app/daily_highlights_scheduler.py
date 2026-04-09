@@ -14,13 +14,14 @@ Important behavior:
 import logging
 import threading
 import time
-from datetime import datetime, timedelta, date
+from datetime import date, datetime, timedelta
 
 from sqlalchemy.orm import Session
 
 from . import daily_highlights
 from .config import Config
 from .logging_config import get_logger
+from .time_utils import utcnow_naive
 
 logger = get_logger(__name__)
 
@@ -36,7 +37,7 @@ def _get_next_run_time(hour: int, minute: int) -> datetime:
     Returns:
         datetime when next run should occur
     """
-    now = datetime.utcnow()
+    now = utcnow_naive()
     next_run = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
 
     # If the time has already passed today, schedule for tomorrow
@@ -53,7 +54,7 @@ def _sleep_until_next_run(hour: int, minute: int) -> None:
     """
     while True:
         next_run = _get_next_run_time(hour, minute)
-        sleep_seconds = (next_run - datetime.utcnow()).total_seconds()
+        sleep_seconds = (next_run - utcnow_naive()).total_seconds()
 
         if sleep_seconds <= 0:
             # Time to run
@@ -102,7 +103,7 @@ def run_background_scheduler() -> None:
 
     while True:
         try:
-            now = datetime.utcnow()
+            now = utcnow_naive()
             today = now.date()
 
             # Run highlights once per UTC day when the scheduled time has passed.

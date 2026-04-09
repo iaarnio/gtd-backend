@@ -2,10 +2,10 @@
 Test factories for creating model instances in tests.
 """
 import json
-from datetime import datetime
 from typing import Optional
 
 from app.models import Capture
+from app.time_utils import utcnow_naive
 
 
 def make_capture(db, **kwargs) -> Capture:
@@ -50,7 +50,7 @@ def make_approved_capture(
     return make_capture(
         db,
         decision_status="approved",
-        decision_at=datetime.utcnow(),
+        decision_at=utcnow_naive(),
         clarify_status="completed",
         clarify_json=json.dumps(clar),
         commit_status=commit_status,

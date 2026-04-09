@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 class CaptureCreate(BaseModel):
@@ -34,8 +34,7 @@ class CaptureOut(BaseModel):
     decision_notes: Optional[str] = None
     external_commit_state: Optional[str] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ClarificationUpdate(BaseModel):
@@ -46,4 +45,3 @@ class ClarificationUpdate(BaseModel):
     """
 
     data: Any
-

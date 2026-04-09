@@ -1,19 +1,20 @@
 import json
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 from app import backlog_processor, models
+from app.time_utils import utcnow_naive
 
 
 def test_nightly_backlog_drain_processes_oldest_pending_items_first(db_session, monkeypatch):
     old_item = models.BacklogItem(
         raw_text="old task",
         status="pending",
-        imported_at=datetime.utcnow() - timedelta(days=2),
+        imported_at=utcnow_naive() - timedelta(days=2),
     )
     new_item = models.BacklogItem(
         raw_text="new task",
         status="pending",
-        imported_at=datetime.utcnow() - timedelta(days=1),
+        imported_at=utcnow_naive() - timedelta(days=1),
     )
     db_session.add_all([old_item, new_item])
     db_session.commit()

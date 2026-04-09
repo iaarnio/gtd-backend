@@ -1,8 +1,9 @@
-from datetime import date, datetime
+from datetime import date
 
 from sqlalchemy import Boolean, Column, Date, DateTime, Integer, String, Text
 
 from .db import Base
+from .time_utils import utcnow_naive
 
 
 class Capture(Base):
@@ -21,7 +22,7 @@ class Capture(Base):
     created_at = Column(
         DateTime,
         nullable=False,
-        default=datetime.utcnow,
+        default=utcnow_naive,
     )
     raw_text = Column(Text, nullable=False)
     source = Column(String(50), nullable=False)
@@ -109,7 +110,7 @@ class Anchor(Base):
     created_at = Column(
         DateTime,
         nullable=False,
-        default=datetime.utcnow,
+        default=utcnow_naive,
     )
 
     # Logical kind, in case more anchor types are added later.
@@ -157,7 +158,7 @@ class RtmAuth(Base):
     created_at = Column(
         DateTime,
         nullable=False,
-        default=datetime.utcnow,
+        default=utcnow_naive,
     )
 
     # When the token was last verified with RTM
@@ -203,10 +204,10 @@ class RtmTask(Base):
     last_suggested_at = Column(DateTime, nullable=True, index=True)
 
     # When this record was last synced with RTM
-    last_synced_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    last_synced_at = Column(DateTime, nullable=False, default=utcnow_naive)
 
     # Timestamps
-    created_at_db = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created_at_db = Column(DateTime, nullable=False, default=utcnow_naive)
 
 
 class BacklogItem(Base):
@@ -240,7 +241,7 @@ class BacklogItem(Base):
     )
 
     # When imported
-    imported_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+    imported_at = Column(DateTime, nullable=False, default=utcnow_naive, index=True)
 
     # When actually processed (moved to clarify)
     processed_at = Column(DateTime, nullable=True)
@@ -252,6 +253,5 @@ class BacklogItem(Base):
     last_error = Column(Text, nullable=True)
 
     # Timestamps
-    created_at_db = Column(DateTime, nullable=False, default=datetime.utcnow)
-
+    created_at_db = Column(DateTime, nullable=False, default=utcnow_naive)
 

@@ -3,7 +3,7 @@ import json
 import logging
 import os
 import xml.etree.ElementTree as ET
-from datetime import date, datetime
+from datetime import date
 from typing import Any, Dict, List, Optional, Tuple
 
 from .config import config
@@ -11,6 +11,7 @@ from .db import SessionLocal
 from .db_utils import transactional_session
 from .models import Anchor, Capture
 from .rtm import add_note, add_task, call as rtm_call, create_timeline, is_configured
+from .time_utils import utcnow_iso_z, utcnow_naive
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +40,7 @@ RETRY_DELAY_SECONDS = config.COMMIT_RETRY_DELAY
 
 
 def _now_iso() -> str:
-    return datetime.utcnow().isoformat() + "Z"
+    return utcnow_iso_z()
 
 
 def _classify_commit_error(exc: Exception) -> Tuple[str, str]:
@@ -208,7 +209,7 @@ def _commit_one_capture(db, capture: Capture) -> None:
                 },
             )
             capture.commit_status = "failed"
-            capture.last_commit_attempt_at = datetime.utcnow()
+            capture.last_commit_attempt_at = utcnow_naive()
             capture.commit_error_message = "Missing project_shortname in clarification"
             db.add(capture)
             with transactional_session(db):
@@ -228,7 +229,7 @@ def _commit_one_capture(db, capture: Capture) -> None:
 
     # Increment attempt count before trying
     capture.commit_attempt_count += 1
-    now = datetime.utcnow()
+    now = utcnow_naive()
     capture.last_commit_attempt_at = now
 
     # External side effect (RTM)

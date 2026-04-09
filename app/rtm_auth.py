@@ -1,11 +1,12 @@
 import logging
 import os
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import Optional, Tuple
 
 from .db import SessionLocal
 from .models import RtmAuth
 from .rtm import auth_check_token, auth_get_frob, auth_get_token, is_configured
+from .time_utils import utcnow_naive
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +34,7 @@ def is_rtm_auth_valid() -> bool:
 
     # If we haven't checked recently, revalidate
     if auth.last_checked_at is None or (
-        datetime.utcnow() - auth.last_checked_at
+        utcnow_naive() - auth.last_checked_at
     ) > timedelta(hours=REVALIDATION_INTERVAL_HOURS):
         ensure_valid_rtm_auth()
         # Refresh from DB
@@ -75,7 +76,7 @@ def ensure_valid_rtm_auth() -> bool:
             auth.perms = auth_info.get("perms")
             auth.username = user_info.get("username")
             auth.user_id = user_info.get("id")
-            auth.last_checked_at = datetime.utcnow()
+            auth.last_checked_at = utcnow_naive()
             db.add(auth)
             db.commit()
             logger.info(
@@ -95,7 +96,7 @@ def _mark_auth_invalid(auth: RtmAuth) -> None:
     db = SessionLocal()
     try:
         auth.valid = "invalid"
-        auth.last_checked_at = datetime.utcnow()
+        auth.last_checked_at = utcnow_naive()
         db.add(auth)
         db.commit()
     finally:
@@ -116,7 +117,7 @@ def store_rtm_auth(
             auth.username = username
             auth.user_id = user_id
             auth.valid = "valid"
-            auth.last_checked_at = datetime.utcnow()
+            auth.last_checked_at = utcnow_naive()
         else:
             # Create new record
             auth = RtmAuth(
@@ -125,7 +126,7 @@ def store_rtm_auth(
                 username=username,
                 user_id=user_id,
                 valid="valid",
-                last_checked_at=datetime.utcnow(),
+                last_checked_at=utcnow_naive(),
             )
         db.add(auth)
         db.commit()

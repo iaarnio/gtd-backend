@@ -4,6 +4,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.schemas import CaptureCreate, CaptureOut, ClarificationUpdate
+from app.time_utils import utcnow_naive
 
 
 class TestCaptureCreate:
@@ -44,10 +45,9 @@ class TestCaptureOut:
     """CaptureOut validation tests."""
 
     def test_valid_minimal(self):
-        from datetime import datetime
         out = CaptureOut(
             id=1,
-            created_at=datetime.utcnow(),
+            created_at=utcnow_naive(),
             raw_text="Test",
             source="test",
             decision_status="proposed",
@@ -56,10 +56,9 @@ class TestCaptureOut:
         assert out.decision_status == "proposed"
 
     def test_optional_fields_default_none(self):
-        from datetime import datetime
         out = CaptureOut(
             id=1,
-            created_at=datetime.utcnow(),
+            created_at=utcnow_naive(),
             raw_text="Test",
             source="test",
             decision_status="proposed",
@@ -73,11 +72,9 @@ class TestCaptureOut:
 
     def test_from_attributes(self):
         """CaptureOut should work with from_attributes=True (ORM mode)."""
-        from datetime import datetime
-
         class FakeCapture:
             id = 1
-            created_at = datetime.utcnow()
+            created_at = utcnow_naive()
             raw_text = "Test"
             source = "test"
             source_id = None

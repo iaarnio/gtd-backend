@@ -54,8 +54,8 @@ def test_approvals_list_contains_only_proposed(db_session, monkeypatch):
 
     class _Templates:
         @staticmethod
-        def TemplateResponse(_template_name, context):
-            return context
+        def TemplateResponse(*args):
+            return args[-1]
 
     monkeypatch.setattr(main, "templates", _Templates())
     monkeypatch.setattr(main, "is_rtm_auth_valid", lambda: True)

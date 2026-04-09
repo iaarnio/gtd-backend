@@ -14,6 +14,7 @@ from .db import SessionLocal
 from .db_utils import transactional_session
 from .http_utils import retry_with_backoff
 from .models import Capture
+from .time_utils import utcnow_naive
 
 logger = logging.getLogger(__name__)
 
@@ -350,7 +351,7 @@ def _poll_once() -> None:
 
     db = SessionLocal()
     try:
-        now = datetime.utcnow()
+        now = utcnow_naive()
 
         # Select captures that need clarification:
         # - proposed status AND (pending clarification or failed with retry backoff elapsed)
@@ -511,4 +512,3 @@ def start_background_clarifier() -> None:
     thread = threading.Thread(target=run_clarification_loop, name="clarification-loop", daemon=True)
     thread.start()
     logger.info("Clarification loop thread started")
-

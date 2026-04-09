@@ -11,7 +11,7 @@ Selects 5 lonely actions (no project, no #na tag, not completed) to highlight ea
 import json
 import logging
 import xml.etree.ElementTree as ET
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import Dict, List, Optional
 
 from sqlalchemy.orm import Session
@@ -21,6 +21,7 @@ from .config import Config
 from .db_utils import transactional_session
 from .logging_config import get_logger
 from .rtm import call as rtm_call
+from .time_utils import utcnow_naive
 
 logger = get_logger(__name__)
 
@@ -275,9 +276,9 @@ def build_candidate_pool(db: Session) -> List[models.RtmTask]:
     - Band A: Older tasks (14+ days), prefer least-recently-suggested
     - Band B: Recent tasks (7- days), prefer newest first
     """
-    cutoff_14d = datetime.utcnow() - timedelta(days=14)
-    cutoff_7d = datetime.utcnow() - timedelta(days=7)
-    nag_cutoff = datetime.utcnow() - timedelta(days=SUGGESTION_WINDOW_DAYS)
+    cutoff_14d = utcnow_naive() - timedelta(days=14)
+    cutoff_7d = utcnow_naive() - timedelta(days=7)
+    nag_cutoff = utcnow_naive() - timedelta(days=SUGGESTION_WINDOW_DAYS)
 
     # Band A: Older tasks (14+ days old, anti-stall)
     band_a = (
@@ -406,7 +407,7 @@ def select_final(candidates: List[models.RtmTask]) -> List[models.RtmTask]:
     """
     import random
 
-    now = datetime.utcnow()
+    now = utcnow_naive()
     scored = []
 
     for task in candidates:
@@ -473,7 +474,7 @@ def persist_suggestion_metadata(db: Session, selected: List[models.RtmTask]) -> 
 
     Increments times_suggested and updates last_suggested_at.
     """
-    now = datetime.utcnow()
+    now = utcnow_naive()
 
     for task in selected:
         task.times_suggested += 1

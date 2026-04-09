@@ -3,6 +3,7 @@
 from datetime import date, datetime
 
 from app.models import Anchor, BacklogItem, Capture, RtmAuth, RtmTask
+from app.time_utils import utcnow_naive
 
 
 class TestCaptureModel:
@@ -45,7 +46,7 @@ class TestCaptureModel:
         assert c.rtm_list_id is None
 
     def test_capture_with_all_fields(self, db_session):
-        now = datetime.utcnow()
+        now = utcnow_naive()
         c = Capture(
             raw_text="Full capture",
             source="email",
@@ -147,7 +148,7 @@ class TestRtmAuthModel:
             username="testuser",
             user_id="12345",
             valid="valid",
-            last_checked_at=datetime.utcnow(),
+            last_checked_at=utcnow_naive(),
         )
         db_session.add(auth)
         db_session.commit()
@@ -168,7 +169,7 @@ class TestRtmTaskModel:
             rtm_taskseries_id="ts-1",
             rtm_list_id="l-1",
             name="Test task",
-            created_at=datetime.utcnow(),
+            created_at=utcnow_naive(),
         )
         db_session.add(task)
         db_session.commit()
@@ -182,7 +183,7 @@ class TestRtmTaskModel:
     def test_rtm_task_unique_rtm_task_id(self, db_session):
         """rtm_task_id should be unique."""
         import sqlalchemy
-        now = datetime.utcnow()
+        now = utcnow_naive()
         t1 = RtmTask(rtm_task_id="dup-1", rtm_taskseries_id="ts-1", rtm_list_id="l-1", name="A", created_at=now)
         t2 = RtmTask(rtm_task_id="dup-1", rtm_taskseries_id="ts-2", rtm_list_id="l-2", name="B", created_at=now)
         db_session.add(t1)

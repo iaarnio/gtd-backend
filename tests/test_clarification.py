@@ -13,6 +13,7 @@ from app.clarification import (
     _should_retry_clarification,
 )
 from app.models import Capture
+from app.time_utils import utcnow_naive
 
 
 class TestBuildUserPrompt:
@@ -32,15 +33,15 @@ class TestShouldRetryClarification:
 
     def test_pending_should_retry(self):
         c = Capture(raw_text="Test", source="test", clarify_status="pending")
-        assert _should_retry_clarification(c, datetime.utcnow()) is True
+        assert _should_retry_clarification(c, utcnow_naive()) is True
 
     def test_completed_should_not_retry(self):
         c = Capture(raw_text="Test", source="test", clarify_status="completed")
-        assert _should_retry_clarification(c, datetime.utcnow()) is False
+        assert _should_retry_clarification(c, utcnow_naive()) is False
 
     def test_failed_first_retry_immediate(self):
         """First retry (attempt_count=0, so next attempt=1) should happen immediately."""
-        now = datetime.utcnow()
+        now = utcnow_naive()
         c = Capture(
             raw_text="Test",
             source="test",
@@ -52,7 +53,7 @@ class TestShouldRetryClarification:
 
     def test_failed_second_retry_needs_delay(self):
         """Second retry (attempt_count=1, next=2) needs 5 minutes delay."""
-        now = datetime.utcnow()
+        now = utcnow_naive()
         c = Capture(
             raw_text="Test",
             source="test",
@@ -65,7 +66,7 @@ class TestShouldRetryClarification:
 
     def test_failed_second_retry_after_delay(self):
         """Second retry (attempt_count=1) after 5 min delay should proceed."""
-        now = datetime.utcnow()
+        now = utcnow_naive()
         c = Capture(
             raw_text="Test",
             source="test",
@@ -77,7 +78,7 @@ class TestShouldRetryClarification:
 
     def test_max_attempts_exceeded(self):
         """After max attempts, should not retry."""
-        now = datetime.utcnow()
+        now = utcnow_naive()
         c = Capture(
             raw_text="Test",
             source="test",
@@ -96,7 +97,7 @@ class TestShouldRetryClarification:
             clarify_attempt_count=1,
             last_clarify_attempt_at=None,
         )
-        assert _should_retry_clarification(c, datetime.utcnow()) is True
+        assert _should_retry_clarification(c, utcnow_naive()) is True
 
 
 class TestClarifyCapture:
