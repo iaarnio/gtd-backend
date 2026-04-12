@@ -128,6 +128,12 @@ class Config:
     Environment: COMMIT_RETRY_DELAY
     """
 
+    COMMIT_DEBOUNCE_SECONDS: int = int(os.environ.get("COMMIT_DEBOUNCE_SECONDS", "60"))
+    """
+    Delay after the latest approval before starting RTM sync batch (default: 60 seconds).
+    Environment: COMMIT_DEBOUNCE_SECONDS
+    """
+
     # ============================================================================
     # CLARIFICATION RETRY BACKOFF SCHEDULE
     # ============================================================================

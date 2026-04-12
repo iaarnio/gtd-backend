@@ -1,4 +1,3 @@
-import asyncio
 import json
 import logging
 import os
@@ -18,6 +17,7 @@ from .db_utils import transactional_session
 from .logging_config import configure_logging, get_logger
 from .rtm import auth_get_frob, auth_get_token
 from .rtm_auth import is_rtm_auth_valid, store_rtm_auth, bootstrap_rtm_auth_from_env
+from .config import config
 from .schemas import CaptureCreate, CaptureOut, ClarificationUpdate
 from .time_utils import utcnow_iso_z, utcnow_naive
 from app.backlog_processor import bulk_import_backlog, get_backlog_status
@@ -484,11 +484,18 @@ def approvals_list(request: Request, db: Session = Depends(get_db)) -> HTMLRespo
 
     # Check RTM auth status
     rtm_auth_valid = is_rtm_auth_valid()
+    query_params = getattr(request, "query_params", {})
+    sync_queued = query_params.get("sync_queued") == "1"
 
     return templates.TemplateResponse(
         request,
         "approvals_list.html",
-        {"captures": enriched, "rtm_auth_valid": rtm_auth_valid},
+        {
+            "captures": enriched,
+            "rtm_auth_valid": rtm_auth_valid,
+            "sync_queued": sync_queued,
+            "commit_debounce_seconds": config.COMMIT_DEBOUNCE_SECONDS,
+        },
     )
 
 
@@ -659,14 +666,11 @@ async def approve_capture(
     with transactional_session(db):
         pass  # Context manager handles commit
 
-    # Trigger immediate RTM sync for the just-approved capture
-    # (also picks up any previously failed captures)
-    failed_ids = rtm_commit.sync_approved_captures(capture_ids=[capture_id])
-    if failed_ids:
-        # Spawn background retries for captures that failed immediate sync
-        asyncio.ensure_future(rtm_commit.retry_failed_captures(failed_ids))
+    # Schedule debounced background sync so approvals stay responsive.
+    # Each new approval resets the timer and batches pending approvals.
+    rtm_commit.schedule_debounced_sync()
 
-    return RedirectResponse(url="/approvals", status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse(url="/approvals?sync_queued=1", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @app.post("/approvals/{capture_id}/reject")

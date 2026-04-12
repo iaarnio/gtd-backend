@@ -63,3 +63,32 @@ def test_approvals_list_contains_only_proposed(db_session, monkeypatch):
     context = main.approvals_list(SimpleNamespace(), db_session)
     statuses = [c["decision_status"] for c in context["captures"]]
     assert statuses == ["proposed"]
+
+
+def test_approve_schedules_debounced_sync_without_blocking(db_session, monkeypatch):
+    capture = models.Capture(
+        raw_text="approve me",
+        source="test",
+        decision_status="proposed",
+        clarify_json=json.dumps({"type": "next_action", "next_action": "Do thing"}),
+    )
+    db_session.add(capture)
+    db_session.commit()
+    db_session.refresh(capture)
+
+    scheduled = {"count": 0}
+
+    def _schedule_sync():
+        scheduled["count"] += 1
+
+    monkeypatch.setattr(main.rtm_commit, "schedule_debounced_sync", _schedule_sync)
+
+    request = _FakeRequest({"next_action": "Do thing"})
+    response = asyncio.run(main.approve_capture(capture.id, request, db_session))
+
+    db_session.refresh(capture)
+    assert capture.decision_status == "approved"
+    assert capture.decision_at is not None
+    assert scheduled["count"] == 1
+    assert response.status_code == 303
+    assert response.headers["location"] == "/approvals?sync_queued=1"

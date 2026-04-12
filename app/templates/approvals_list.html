@@ -112,6 +112,12 @@
     {% endif %}
 </div>
 
+{% if sync_queued and rtm_auth_valid %}
+<div style="margin-bottom: 20px; padding: 12px 15px; border-radius: 4px; background-color: #e3f2fd; border: 1px solid #bbdefb; color: #0d47a1;">
+    <strong>⏳ RTM sync queued</strong> — New approvals are batched and synced in the background after {{ commit_debounce_seconds }}s of inactivity.
+</div>
+{% endif %}
+
 <!-- Action Buttons -->
 <div style="margin-bottom: 20px; display: flex; gap: 10px; flex-wrap: wrap;">
     <button id="pull-emails-btn" style="padding: 8px 16px; background: #455a64; color: white; border: none; border-radius: 3px; cursor: pointer; font-weight: bold;">

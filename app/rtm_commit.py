@@ -37,6 +37,9 @@ explicit human decision to clear later (hardening step).
 # Import retry limits from config
 MAX_COMMIT_ATTEMPTS = config.MAX_COMMIT_RETRIES
 RETRY_DELAY_SECONDS = config.COMMIT_RETRY_DELAY
+COMMIT_DEBOUNCE_SECONDS = config.COMMIT_DEBOUNCE_SECONDS
+
+_debounced_sync_task: Optional[asyncio.Task] = None
 
 
 def _now_iso() -> str:
@@ -624,6 +627,59 @@ async def retry_failed_captures(capture_ids: list) -> None:
             )
         finally:
             db.close()
+
+
+def schedule_debounced_sync() -> None:
+    """
+    Schedule debounced background sync for approved captures.
+
+    Every new approval resets the timer. Sync starts only after there
+    have been no new approvals for COMMIT_DEBOUNCE_SECONDS.
+    """
+    global _debounced_sync_task
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        logger.warning(
+            "No running event loop; skipping debounced sync scheduling",
+            extra={"component": "rtm_commit", "operation": "debounced_schedule"},
+        )
+        return
+
+    if _debounced_sync_task and not _debounced_sync_task.done():
+        _debounced_sync_task.cancel()
+
+    _debounced_sync_task = loop.create_task(_run_debounced_sync())
+
+
+async def _run_debounced_sync() -> None:
+    """Wait for debounce window, then sync approved captures off-thread."""
+    global _debounced_sync_task
+
+    try:
+        if COMMIT_DEBOUNCE_SECONDS > 0:
+            await asyncio.sleep(COMMIT_DEBOUNCE_SECONDS)
+
+        failed_ids = await asyncio.to_thread(sync_approved_captures)
+        if failed_ids:
+            asyncio.create_task(retry_failed_captures(failed_ids))
+    except asyncio.CancelledError:
+        logger.debug(
+            "Debounced RTM sync rescheduled",
+            extra={"component": "rtm_commit", "operation": "debounced_schedule"},
+        )
+        raise
+    except Exception as e:
+        logger.error(
+            f"Debounced RTM sync failed: {e}",
+            extra={"component": "rtm_commit", "operation": "debounced_sync"},
+            exc_info=True,
+        )
+    finally:
+        current_task = asyncio.current_task()
+        if _debounced_sync_task is current_task:
+            _debounced_sync_task = None
 
 
 def sync_approved_captures(capture_ids: list = None) -> list:
