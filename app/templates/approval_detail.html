@@ -115,13 +115,19 @@
 
             <div class="form-field">
                 <label>Project</label>
-                <input type="text" name="project_name"
+                <input type="text" id="project_name" name="project_name"
                        value="{{ clar.get('project_name', '') or '' }}">
             </div>
 
             <div class="form-field">
-                <label>Project short name</label>
-                <input type="text" name="project_shortname"
+                <label>
+                    Project short name
+                    <span id="shortname-required-hint"
+                          style="color:#c00;display:none;font-weight:normal;font-size:0.85em;">
+                        — required
+                    </span>
+                </label>
+                <input type="text" id="project_shortname" name="project_shortname"
                        value="{{ clar.get('project_shortname', '') or '' }}"
                        style="text-transform: uppercase;">
             </div>
@@ -135,6 +141,7 @@
                     <div class="checkbox-group">
                         <label>NA</label>
                         <input type="checkbox"
+                               id="is_next_action"
                                name="is_next_action"
                                {% if clar.get('type') == 'next_action' %}checked{% endif %}>
                     </div>
@@ -178,6 +185,7 @@
     <div class="button-group">
 
         <button type="submit"
+                id="approve-btn"
                 class="approve"
                 formaction="/approvals/{{ capture.id }}/approve">
             Approve
@@ -204,5 +212,56 @@
     <pre>{{ capture.raw_text }}</pre>
 
 </form>
+
+<script>
+(function () {
+    // Mirror the server-side type resolution logic from main.py:
+    //   is_next_action checked  → "next_action"
+    //   project_name filled     → "project"
+    //   else                    → original clarification type
+    var originalType = {{ clar.get('type', 'next_action') | tojson }};
+
+    var projectNameEl = document.getElementById('project_name');
+    var shortnameEl   = document.getElementById('project_shortname');
+    var isNaEl        = document.getElementById('is_next_action');
+    var approveBtn    = document.getElementById('approve-btn');
+    var requiredHint  = document.getElementById('shortname-required-hint');
+
+    if (!approveBtn) return; // already decided (not proposed)
+
+    function resolvedType() {
+        if (isNaEl && isNaEl.checked) return 'next_action';
+        if (projectNameEl && projectNameEl.value.trim()) return 'project';
+        return originalType;
+    }
+
+    function validate() {
+        var type = resolvedType();
+        var isProject = (type === 'project');
+        var shortnameOk = shortnameEl && shortnameEl.value.trim().length > 0;
+        var blocked = isProject && !shortnameOk;
+
+        approveBtn.disabled = blocked;
+        approveBtn.style.opacity = blocked ? '0.4' : '';
+        approveBtn.style.cursor = blocked ? 'not-allowed' : '';
+        approveBtn.title = blocked ? 'Project short name is required before approving' : '';
+
+        if (requiredHint) {
+            requiredHint.style.display = isProject ? 'inline' : 'none';
+        }
+        if (shortnameEl) {
+            shortnameEl.style.borderColor = (isProject && !shortnameOk) ? '#c00' : '';
+        }
+    }
+
+    [projectNameEl, shortnameEl].forEach(function (el) {
+        if (el) el.addEventListener('input', validate);
+    });
+    if (isNaEl) isNaEl.addEventListener('change', validate);
+
+    // Run on page load so button state is correct immediately.
+    validate();
+})();
+</script>
 
 {% endblock %}
