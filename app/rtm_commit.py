@@ -361,6 +361,9 @@ def _commit_one_capture(db, capture: Capture) -> None:
             )
 
         capture.commit_error_message = error_msg
+        # Record when this capture first entered a failed state (never overwritten).
+        if capture.first_failed_at is None:
+            capture.first_failed_at = now
         db.add(capture)
         with transactional_session(db):
             pass  # Context manager handles commit
@@ -752,6 +755,290 @@ def sync_approved_captures(capture_ids: list = None) -> list:
         db.close()
 
     return failed_ids
+
+
+# ---------------------------------------------------------------------------
+# Extended retry backoff schedule (seconds from last_commit_attempt_at).
+# After the initial fast retries (3 × 5 min), this loop keeps trying with
+# increasing delays up to 24 h from first_failed_at.
+# ---------------------------------------------------------------------------
+_EXTENDED_BACKOFF_SECONDS = [
+    30 * 60,       # +30 min
+    60 * 60,       # +1 h
+    2 * 60 * 60,   # +2 h
+    4 * 60 * 60,   # +4 h
+    8 * 60 * 60,   # +8 h
+    24 * 60 * 60,  # +24 h (last attempt)
+]
+
+# How long to keep retrying from first_failed_at before giving up entirely.
+_RETRY_WINDOW_SECONDS = 25 * 60 * 60  # 25 h
+
+# Send the "still failing" notification after this many seconds from first_failed_at.
+_NOTIFY_AFTER_SECONDS = 2 * 60 * 60   # 2 h
+
+# Send the "gave up" notification after this many seconds from first_failed_at.
+_NOTIFY_FINAL_SECONDS = 24 * 60 * 60  # 24 h
+
+# How often the extended-retry loop wakes up.
+_EXTENDED_LOOP_INTERVAL = int(
+    __import__("os").environ.get("RTM_EXTENDED_RETRY_LOOP_INTERVAL", "600")
+)  # 10 min default
+
+_extended_retry_task: Optional[asyncio.Task] = None
+
+
+def _should_extended_retry(capture) -> bool:
+    """
+    Return True if the capture is due for an extended retry attempt.
+
+    Backoff logic: the minimum gap between retries grows as the total failure
+    duration grows.  The schedule (indexed by elapsed_since_first) is:
+
+        < 1 h   → retry after 30 min
+        < 2 h   → retry after 1 h
+        < 4 h   → retry after 2 h
+        < 8 h   → retry after 4 h
+        < 24 h  → retry after 8 h
+        < 25 h  → retry after 24 h  (one final attempt, then give up)
+        ≥ 25 h  → no more retries
+
+    The loop wakes every 10 min so actual retry times are rounded up to the
+    next loop tick.
+    """
+    if capture.commit_status not in ("failed", "permanently_failed"):
+        return False
+    if capture.first_failed_at is None or capture.last_commit_attempt_at is None:
+        return False
+
+    now = utcnow_naive()
+
+    elapsed_since_first = (now - capture.first_failed_at).total_seconds()
+    if elapsed_since_first > _RETRY_WINDOW_SECONDS:
+        return False
+
+    elapsed_since_last = (now - capture.last_commit_attempt_at).total_seconds()
+
+    # Determine the minimum gap required between retries based on total failure age.
+    # _EXTENDED_BACKOFF_SECONDS is [30m, 1h, 2h, 4h, 8h, 24h].
+    # We pair consecutive thresholds: if failure age is within the *next* threshold,
+    # wait at least the *current* threshold before retrying.
+    thresholds = _EXTENDED_BACKOFF_SECONDS  # [1800, 3600, 7200, 14400, 28800, 86400]
+    for i, min_gap in enumerate(thresholds):
+        next_threshold = thresholds[i + 1] if i + 1 < len(thresholds) else _RETRY_WINDOW_SECONDS
+        if elapsed_since_first < next_threshold:
+            return elapsed_since_last >= min_gap
+
+    # Beyond all thresholds (shouldn't reach here given the window check above).
+    return False
+
+
+def _extended_retry_one(db, capture) -> None:
+    """
+    Reset a permanently_failed/failed capture for one more attempt.
+
+    Resets attempt_count to 0 so _commit_one_capture's MAX_COMMIT_ATTEMPTS
+    gate doesn't immediately re-block it.
+    """
+    logger.info(
+        f"Extended retry: resetting capture {capture.id} for reattempt "
+        f"(first_failed_at={capture.first_failed_at}, "
+        f"attempts_so_far={capture.commit_attempt_count})",
+        extra={
+            "component": "rtm_commit",
+            "operation": "extended_retry",
+            "capture_id": capture.id,
+        },
+    )
+    capture.commit_attempt_count = 0
+    capture.commit_status = "failed"
+    db.add(capture)
+    with transactional_session(db):
+        pass
+    _commit_one_capture(db, capture)
+
+
+def _check_and_notify(db) -> None:
+    """
+    Send notification emails for captures that have been failing long enough.
+
+    - "Still failing" email: fired once when first_failed_at > 2 h ago and
+      no prior notification has been sent.
+    - "Gave up" email: fired once when first_failed_at > 24 h ago and the
+      prior notification was the 2 h one (failure_notified_at < first_failed_at + 23 h).
+    """
+    from .email_notify import is_configured as smtp_configured, send_rtm_failure_notification
+
+    if not smtp_configured():
+        return
+
+    now = utcnow_naive()
+
+    failed_statuses = ("failed", "permanently_failed", "auth_failed", "unknown")
+
+    all_failing = (
+        db.query(Capture)
+        .filter(
+            Capture.decision_status == "approved",
+            Capture.commit_status.in_(failed_statuses),
+            Capture.first_failed_at.isnot(None),
+        )
+        .all()
+    )
+
+    two_hour_candidates = []
+    final_candidates = []
+
+    for c in all_failing:
+        elapsed = (now - c.first_failed_at).total_seconds()
+
+        if elapsed >= _NOTIFY_FINAL_SECONDS:
+            # Final notification: send if no notification sent yet, OR if the last
+            # notification was the 2 h one (i.e., was sent before the 24 h mark).
+            final_threshold_ts = c.first_failed_at + __import__("datetime").timedelta(
+                seconds=_NOTIFY_FINAL_SECONDS
+            )
+            if c.failure_notified_at is None or c.failure_notified_at < final_threshold_ts:
+                final_candidates.append(c)
+
+        elif elapsed >= _NOTIFY_AFTER_SECONDS:
+            # 2 h notification: only if never notified for this failure episode.
+            if c.failure_notified_at is None:
+                two_hour_candidates.append(c)
+
+    if two_hour_candidates:
+        sent = send_rtm_failure_notification(two_hour_candidates, is_final=False)
+        if sent:
+            ts = utcnow_naive()
+            for c in two_hour_candidates:
+                c.failure_notified_at = ts
+                db.add(c)
+            with transactional_session(db):
+                pass
+            logger.info(
+                f"Sent 2 h RTM failure notification for {len(two_hour_candidates)} capture(s)",
+                extra={"component": "rtm_commit", "operation": "notify"},
+            )
+
+    if final_candidates:
+        sent = send_rtm_failure_notification(final_candidates, is_final=True)
+        if sent:
+            ts = utcnow_naive()
+            for c in final_candidates:
+                c.failure_notified_at = ts
+                db.add(c)
+            with transactional_session(db):
+                pass
+            logger.info(
+                f"Sent final RTM failure notification for {len(final_candidates)} capture(s)",
+                extra={"component": "rtm_commit", "operation": "notify"},
+            )
+
+
+def _extended_retry_poll_once() -> None:
+    """
+    Single pass of the extended retry loop.
+
+    1. Retry captures that are due for a backoff-scheduled reattempt.
+    2. Send notification emails for captures that have been failing long enough.
+    """
+    import os as _os
+    if not _os.environ.get("RTM_API_KEY") or not _os.environ.get("RTM_SHARED_SECRET"):
+        return
+
+    from .rtm_auth import is_rtm_auth_valid
+    if not is_rtm_auth_valid():
+        return
+
+    db = SessionLocal()
+    try:
+        # Find all captures eligible for extended retry.
+        candidates = (
+            db.query(Capture)
+            .filter(
+                Capture.decision_status == "approved",
+                Capture.commit_status.in_(("failed", "permanently_failed")),
+                Capture.first_failed_at.isnot(None),
+            )
+            .all()
+        )
+
+        retried = 0
+        for capture in candidates:
+            if _should_extended_retry(capture):
+                _extended_retry_one(db, capture)
+                retried += 1
+
+        if retried:
+            logger.info(
+                f"Extended retry loop: retried {retried} capture(s)",
+                extra={"component": "rtm_commit", "operation": "extended_retry"},
+            )
+
+        # Notification check (independent of retry).
+        _check_and_notify(db)
+
+    except Exception as exc:
+        logger.error(
+            f"Error in extended retry loop: {exc}",
+            extra={"component": "rtm_commit", "operation": "extended_retry"},
+            exc_info=True,
+        )
+    finally:
+        db.close()
+
+
+async def _run_extended_retry_loop() -> None:
+    """Async loop: wake every _EXTENDED_LOOP_INTERVAL seconds."""
+    global _extended_retry_task
+    logger.info(
+        f"Extended RTM retry loop started (interval={_EXTENDED_LOOP_INTERVAL}s)",
+        extra={"component": "rtm_commit", "operation": "extended_retry_loop"},
+    )
+    while True:
+        try:
+            await asyncio.sleep(_EXTENDED_LOOP_INTERVAL)
+            await asyncio.to_thread(_extended_retry_poll_once)
+        except asyncio.CancelledError:
+            logger.info(
+                "Extended RTM retry loop cancelled",
+                extra={"component": "rtm_commit", "operation": "extended_retry_loop"},
+            )
+            raise
+        except Exception as exc:
+            logger.error(
+                f"Unexpected error in extended retry loop: {exc}",
+                extra={"component": "rtm_commit", "operation": "extended_retry_loop"},
+                exc_info=True,
+            )
+
+
+def start_extended_retry_loop() -> None:
+    """
+    Start the extended retry / notification background loop.
+
+    Safe to call from lifespan context (running event loop required).
+    Idempotent: does nothing if the loop is already running.
+    """
+    global _extended_retry_task
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        logger.warning(
+            "No running event loop; extended retry loop not started",
+            extra={"component": "rtm_commit", "operation": "extended_retry_loop"},
+        )
+        return
+
+    if _extended_retry_task and not _extended_retry_task.done():
+        return  # already running
+
+    _extended_retry_task = loop.create_task(_run_extended_retry_loop())
+    logger.info(
+        "Extended RTM retry loop scheduled",
+        extra={"component": "rtm_commit", "operation": "extended_retry_loop"},
+    )
 
 
 def startup_sweep() -> None:

@@ -86,6 +86,13 @@ class Capture(Base):
     # Detailed error message from last failed commit (for operator visibility)
     commit_error_message = Column(Text, nullable=True)
 
+    # When this capture first entered a failed commit state (set once, never reset).
+    # Used to determine when to send failure notification and cap extended retries.
+    first_failed_at = Column(DateTime, nullable=True)
+
+    # When a failure notification email was last sent for this capture (anti-spam).
+    failure_notified_at = Column(DateTime, nullable=True)
+
     # RTM task IDs and metadata from successful commit
     rtm_task_id = Column(String(255), nullable=True)
     rtm_taskseries_id = Column(String(255), nullable=True)

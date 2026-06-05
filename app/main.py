@@ -31,6 +31,28 @@ configure_logging(
 )
 logger = get_logger(__name__)
 
+def _apply_schema_migrations() -> None:
+    """
+    Apply any schema changes that create_all() won't handle on existing DBs.
+
+    SQLite supports ALTER TABLE … ADD COLUMN (idempotent via try/except).
+    New columns must have a default or be nullable.
+    """
+    migrations = [
+        "ALTER TABLE captures ADD COLUMN first_failed_at DATETIME",
+        "ALTER TABLE captures ADD COLUMN failure_notified_at DATETIME",
+    ]
+    with engine.connect() as conn:
+        for stmt in migrations:
+            try:
+                conn.execute(__import__("sqlalchemy").text(stmt))
+                conn.commit()
+                logger.info(f"Schema migration applied: {stmt}")
+            except Exception:
+                # Column already exists — expected on subsequent startups.
+                pass
+
+
 def initialize_database() -> None:
     """
     Ensure the SQLite database file exists and all tables are created,
@@ -39,6 +61,8 @@ def initialize_database() -> None:
     """
     # Importing models above ensures all metadata is registered on Base.
     Base.metadata.create_all(bind=engine)
+    # Apply any schema migrations (new columns on existing tables).
+    _apply_schema_migrations()
     # Bootstrap RTM auth from .env on first startup
     bootstrap_rtm_auth_from_env()
     # Start email ingestion loop. If email credentials are not
@@ -58,6 +82,8 @@ def initialize_database() -> None:
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     initialize_database()
+    # Start extended RTM retry / notification loop (requires running event loop).
+    rtm_commit.start_extended_retry_loop()
     yield
 
 

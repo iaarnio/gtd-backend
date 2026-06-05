@@ -165,6 +165,32 @@ class Config:
     """Minute (0-59) to run daily highlights job."""
 
     # ============================================================================
+    # EMAIL NOTIFICATION (SMTP) CONFIGURATION
+    # ============================================================================
+    SMTP_HOST: str = os.environ.get("SMTP_HOST", "smtp.gmail.com")
+    """
+    SMTP server hostname for outbound notification emails.
+    Environment: SMTP_HOST
+    """
+
+    SMTP_PORT: int = int(os.environ.get("SMTP_PORT", "587"))
+    """
+    SMTP port (587 = STARTTLS, 465 = SSL). Default: 587.
+    Environment: SMTP_PORT
+    """
+
+    # SMTP_USER / SMTP_PASSWORD / NOTIFY_EMAIL are read from environment at send
+    # time in email_notify.py; they default to IMAP_USERNAME / IMAP_PASSWORD.
+
+    RTM_EXTENDED_RETRY_LOOP_INTERVAL: int = int(
+        os.environ.get("RTM_EXTENDED_RETRY_LOOP_INTERVAL", "600")
+    )
+    """
+    How often (seconds) the extended-retry/notification loop wakes up. Default: 600 (10 min).
+    Environment: RTM_EXTENDED_RETRY_LOOP_INTERVAL
+    """
+
+    # ============================================================================
     # HELPER PROPERTIES
     # ============================================================================
     @property

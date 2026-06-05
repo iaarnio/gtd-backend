@@ -61,6 +61,10 @@
     .badge-pending { background: #e2e3e5; color: #383d41; }
     .badge-committed { background: #d4edda; color: #155724; }
     .badge-failed { background: #f8d7da; color: #721c24; }
+    .badge-permanently_failed { background: #f5c6cb; color: #491217; font-weight: bold; }
+    .badge-unknown { background: #fff3cd; color: #856404; }
+    .badge-auth_failed { background: #f8d7da; color: #721c24; }
+    .commit-error { font-size: 0.75rem; color: #721c24; margin-top: 2px; max-width: 220px; word-break: break-word; }
     .email-link { color: #0066cc; text-decoration: none; }
     .email-link:hover { text-decoration: underline; }
     table { font-size: 0.9rem; }
@@ -114,9 +118,12 @@
                     </span>
                 </td>
                 <td>
-                    <span class="badge badge-{{ capture.commit_status }}">
+                    <span class="badge badge-{{ capture.commit_status }}"{% if capture.commit_error_message %} title="{{ capture.commit_error_message }}"{% endif %}>
                         {{ capture.commit_status }}
                     </span>
+                    {% if capture.commit_error_message and capture.commit_status not in ['pending', 'committed'] %}
+                    <div class="commit-error">{{ capture.commit_error_message[:120] }}{% if capture.commit_error_message|length > 120 %}…{% endif %}</div>
+                    {% endif %}
                 </td>
                 <td>
                     {% if capture.decision_status == 'rejected' %}
@@ -161,9 +168,12 @@
         {% endif %}
 
         <div class="audit-footer">
-            <span class="badge badge-{{ capture.commit_status }}">
+            <span class="badge badge-{{ capture.commit_status }}"{% if capture.commit_error_message %} title="{{ capture.commit_error_message }}"{% endif %}>
                 {{ capture.commit_status }}
             </span>
+            {% if capture.commit_error_message and capture.commit_status not in ['pending', 'committed'] %}
+            <div class="commit-error" style="margin-top: 4px;">{{ capture.commit_error_message }}</div>
+            {% endif %}
 
             {% if capture.decision_status == 'rejected' %}
                 <button class="restore-btn" data-id="{{ capture.id }}">Restore</button>
