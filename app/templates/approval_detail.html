@@ -218,7 +218,9 @@
     // Mirror the server-side type resolution logic from main.py:
     //   is_next_action checked  → "next_action"
     //   project_name filled     → "project"
-    //   else                    → original clarification type
+    //   else                    → original clarification type, unless that
+    //                              type was "project" (cleared Project field
+    //                              means it's no longer a project)
     var originalType = {{ clar.get('type', 'next_action') | tojson }};
 
     var projectNameEl = document.getElementById('project_name');
@@ -232,6 +234,9 @@
     function resolvedType() {
         if (isNaEl && isNaEl.checked) return 'next_action';
         if (projectNameEl && projectNameEl.value.trim()) return 'project';
+        // Project field cleared: no longer a project, regardless of what the
+        // LLM originally guessed.
+        if (originalType === 'project') return 'next_action';
         return originalType;
     }
 

@@ -427,6 +427,25 @@ def _parse_clarify_json(raw: Optional[str]) -> Optional[Dict[str, Any]]:
     return None
 
 
+def _resolve_clar_type(
+    *, is_next_action: bool, project_name: str, clar: Dict[str, Any], default: str
+) -> str:
+    """
+    Determine clarification type from approval-form fields.
+
+    The NA checkbox and a filled Project field are explicit overrides. If
+    neither is set, fall back to the original clarification type — unless
+    that original type was "project": an emptied Project field means the
+    capture is no longer a project, regardless of what the LLM first guessed.
+    """
+    if is_next_action:
+        return "next_action"
+    if project_name:
+        return "project"
+    original_type = clar.get("type", default)
+    return "next_action" if original_type == "project" else original_type
+
+
 def _suggest_next_action(clar: Dict[str, Any]) -> str:
     """
     Build a practical Task field default for approval UI.
@@ -588,13 +607,9 @@ async def approval_update_clarification(
     is_next_action = form.get("is_next_action") == "on"
 
     # Determine type: NA checkbox is the primary indicator
-    if is_next_action:
-        clar_type = "next_action"
-    elif project_name:
-        clar_type = "project"
-    else:
-        # Keep original type if neither project nor NA checkbox
-        clar_type = clar.get("type", "project")
+    clar_type = _resolve_clar_type(
+        is_next_action=is_next_action, project_name=project_name, clar=clar, default="project"
+    )
 
     clarified_text = (
         next_action if clar_type == "next_action" else project_name
@@ -658,13 +673,9 @@ async def approve_capture(
         is_next_action = form.get("is_next_action") == "on"
 
         # Determine type: NA checkbox is the primary indicator
-        if is_next_action:
-            clar_type = "next_action"
-        elif project_name:
-            clar_type = "project"
-        else:
-            # Keep original type if no explicit override
-            clar_type = clar.get("type", "next_action")
+        clar_type = _resolve_clar_type(
+            is_next_action=is_next_action, project_name=project_name, clar=clar, default="next_action"
+        )
 
         clarified_text = (
             next_action if clar_type == "next_action" else project_name
@@ -730,12 +741,9 @@ async def reject_capture(
         is_next_action = form.get("is_next_action") == "on"
 
         # Determine clarification type: NA checkbox is the primary indicator
-        if is_next_action:
-            clar_type = "next_action"
-        elif project_name:
-            clar_type = "project"
-        else:
-            clar_type = clar.get("type", "next_action")
+        clar_type = _resolve_clar_type(
+            is_next_action=is_next_action, project_name=project_name, clar=clar, default="next_action"
+        )
 
         clarified_text = (
             next_action if clar_type == "next_action" else project_name
