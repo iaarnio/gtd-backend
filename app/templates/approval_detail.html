@@ -114,22 +114,31 @@
         <div>
 
             <div class="form-field">
-                <label>Project</label>
-                <input type="text" id="project_name" name="project_name"
-                       value="{{ clar.get('project_name', '') or '' }}">
+                <label class="checkbox-group" style="font-weight: bold;">
+                    <input type="checkbox" id="project_toggle">
+                    Project
+                </label>
             </div>
 
-            <div class="form-field">
-                <label>
-                    Project short name
-                    <span id="shortname-required-hint"
-                          style="color:#c00;display:none;font-weight:normal;font-size:0.85em;">
-                        — required
-                    </span>
-                </label>
-                <input type="text" id="project_shortname" name="project_shortname"
-                       value="{{ clar.get('project_shortname', '') or '' }}"
-                       style="text-transform: uppercase;">
+            <div id="project-fields">
+                <div class="form-field">
+                    <label>Project name</label>
+                    <input type="text" id="project_name" name="project_name"
+                           value="{{ clar.get('project_name', '') or '' }}">
+                </div>
+
+                <div class="form-field">
+                    <label>
+                        Project short name
+                        <span id="shortname-required-hint"
+                              style="color:#c00;display:none;font-weight:normal;font-size:0.85em;">
+                            — required
+                        </span>
+                    </label>
+                    <input type="text" id="project_shortname" name="project_shortname"
+                           value="{{ clar.get('project_shortname', '') or '' }}"
+                           style="text-transform: uppercase;">
+                </div>
             </div>
 
             <div class="form-field">
@@ -223,13 +232,13 @@
     //                              means it's no longer a project)
     var originalType = {{ clar.get('type', 'next_action') | tojson }};
 
-    var projectNameEl = document.getElementById('project_name');
-    var shortnameEl   = document.getElementById('project_shortname');
-    var isNaEl        = document.getElementById('is_next_action');
-    var approveBtn    = document.getElementById('approve-btn');
-    var requiredHint  = document.getElementById('shortname-required-hint');
-
-    if (!approveBtn) return; // already decided (not proposed)
+    var projectNameEl   = document.getElementById('project_name');
+    var shortnameEl     = document.getElementById('project_shortname');
+    var isNaEl          = document.getElementById('is_next_action');
+    var approveBtn      = document.getElementById('approve-btn');
+    var requiredHint    = document.getElementById('shortname-required-hint');
+    var projectToggleEl = document.getElementById('project_toggle');
+    var projectFieldsEl = document.getElementById('project-fields');
 
     function resolvedType() {
         if (isNaEl && isNaEl.checked) return 'next_action';
@@ -240,16 +249,42 @@
         return originalType;
     }
 
+    function showProjectFields(show) {
+        if (projectFieldsEl) projectFieldsEl.style.display = show ? '' : 'none';
+    }
+
+    // Toggle is a convenience wrapper around the existing type resolution
+    // above: switching it off clears project_name/project_shortname (which
+    // resolvedType() already treats as "not a project"), and switching it
+    // back on restores whatever was last typed before it was cleared.
+    var lastProjectName = projectNameEl ? projectNameEl.value : '';
+    var lastProjectShortname = shortnameEl ? shortnameEl.value : '';
+
+    function onProjectToggleChange() {
+        var on = !!(projectToggleEl && projectToggleEl.checked);
+        if (on) {
+            if (projectNameEl) projectNameEl.value = lastProjectName;
+            if (shortnameEl) shortnameEl.value = lastProjectShortname;
+        } else {
+            if (projectNameEl) { lastProjectName = projectNameEl.value; projectNameEl.value = ''; }
+            if (shortnameEl) { lastProjectShortname = shortnameEl.value; shortnameEl.value = ''; }
+        }
+        showProjectFields(on);
+        validate();
+    }
+
     function validate() {
         var type = resolvedType();
         var isProject = (type === 'project');
         var shortnameOk = shortnameEl && shortnameEl.value.trim().length > 0;
         var blocked = isProject && !shortnameOk;
 
-        approveBtn.disabled = blocked;
-        approveBtn.style.opacity = blocked ? '0.4' : '';
-        approveBtn.style.cursor = blocked ? 'not-allowed' : '';
-        approveBtn.title = blocked ? 'Project short name is required before approving' : '';
+        if (approveBtn) {
+            approveBtn.disabled = blocked;
+            approveBtn.style.opacity = blocked ? '0.4' : '';
+            approveBtn.style.cursor = blocked ? 'not-allowed' : '';
+            approveBtn.title = blocked ? 'Project short name is required before approving' : '';
+        }
 
         if (requiredHint) {
             requiredHint.style.display = isProject ? 'inline' : 'none';
@@ -263,6 +298,12 @@
         if (el) el.addEventListener('input', validate);
     });
     if (isNaEl) isNaEl.addEventListener('change', validate);
+    if (projectToggleEl) projectToggleEl.addEventListener('change', onProjectToggleChange);
+
+    // Initial state: toggle is on iff the capture currently resolves to a
+    // project. Only sync visibility here — nothing to clear/restore yet.
+    if (projectToggleEl) projectToggleEl.checked = (resolvedType() === 'project');
+    showProjectFields(projectToggleEl && projectToggleEl.checked);
 
     // Run on page load so button state is correct immediately.
     validate();
